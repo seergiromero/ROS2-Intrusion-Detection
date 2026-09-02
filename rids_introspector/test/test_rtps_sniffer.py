@@ -83,6 +83,47 @@ class TestProcessPacket:
         assert len(added_events) == 1  # only the first sighting is "new"
         assert len(sniffer.discovered_endpoints) == 1
 
+    def test_duplicate_endpoint_updates_state_and_emits_update(self, sniffer, callback_log):
+        events, cb = callback_log
+        sniffer.on_update_callback = cb
+
+        first = EndpointDiscovered(
+            guid="endpoint-guid",
+            guid_prefix="participant-guid",
+            topic="/scan",
+            type_name="old_type",
+            qos={"reliability": "BEST_EFFORT"},
+            role="publisher",
+        )
+        updated = EndpointDiscovered(
+            guid="endpoint-guid",
+            guid_prefix="participant-guid",
+            topic="/scan",
+            type_name="new_type",
+            qos={"reliability": "RELIABLE"},
+            role="publisher",
+        )
+
+        sniffer._handle_event(first)
+        sniffer._handle_event(updated)
+
+        assert sniffer.discovered_endpoints["endpoint-guid"]["type"] == "new_type"
+        assert sniffer.discovered_endpoints["endpoint-guid"]["qos"] == {"reliability": "RELIABLE"}
+        assert ("ENDPOINT_UPDATED", "endpoint-guid") in events
+
+    def test_duplicate_participant_renews_last_seen_and_emits_update(self, sniffer, callback_log, monkeypatch):
+        events, cb = callback_log
+        sniffer.on_update_callback = cb
+        current_time = iter((100.0, 110.0))
+        monkeypatch.setattr(rtps_sniffer.time, "time", lambda: next(current_time))
+
+        participant = ParticipantDiscovered("participant-guid", "010f", lease_duration=20.0)
+        sniffer._handle_event(participant)
+        sniffer._handle_event(participant)
+
+        assert sniffer.discovered_participants["participant-guid"]["last_seen"] == 110.0
+        assert ("PARTICIPANT_UPDATED", "participant-guid") in events
+
     def test_non_udp_packet_is_ignored(self, sniffer, callback_log):
         events, cb = callback_log
         sniffer.on_update_callback = cb
@@ -236,6 +277,41 @@ class TestLeaseReaper:
 
         assert fresh_guid in sniffer.discovered_participants
         assert events == []
+
+    def test_expiration_propagates_to_graph(self, sniffer, monkeypatch):
+        from graph_builder import GraphBuilder
+
+        builder = GraphBuilder()
+        sniffer.on_update_callback = builder.process_event
+        prefix = "01:02:03:04:05:06:07:08:09:0a:0b:0c"
+        sniffer.discovered_participants[prefix] = {
+            "guid_prefix": prefix,
+            "vendor_id": "010f",
+            "last_seen": 0.0,
+            "lease_duration": 1.0,
+        }
+        sniffer.discovered_endpoints["endpoint-guid"] = {
+            "guid": "endpoint-guid",
+            "guid_prefix": prefix,
+            "topic": "/scan",
+            "type": "type",
+            "qos": {},
+            "role": "publisher",
+            "last_seen": 0.0,
+        }
+        builder.process_event(
+            ParticipantDiscovered(prefix, "010f", lease_duration=1.0)
+        )
+        builder.process_event(
+            EndpointDiscovered("endpoint-guid", prefix, "/scan", "type", {}, "publisher")
+        )
+
+        monkeypatch.setattr(rtps_sniffer.time, "time", lambda: 2.0)
+        monkeypatch.setattr(rtps_sniffer.time, "sleep", lambda _seconds: setattr(sniffer, "running", False))
+        sniffer._lease_reaper_loop()
+
+        assert not builder.graph.has_node(f"participant:{prefix}")
+        assert not builder.graph.has_node("topic:/scan")
 
 
 # ---------------------------------------------------------------------------

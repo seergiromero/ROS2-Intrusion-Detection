@@ -140,8 +140,11 @@ class RTPSSniffer:
                     "last_seen": now,
                     "lease_duration": event.lease_duration,
                 }
-            if is_new:
-                self._notify("PARTICIPANT_ADDED", event.guid_prefix, event)
+            self._notify(
+                "PARTICIPANT_ADDED" if is_new else "PARTICIPANT_UPDATED",
+                event.guid_prefix,
+                event,
+            )
 
         elif isinstance(event, EndpointDiscovered):
             with self._lock:
@@ -152,10 +155,14 @@ class RTPSSniffer:
                     "topic": event.topic,
                     "type": event.type_name,
                     "qos": event.qos,
+                    "role": event.role,
                     "last_seen": now,
                 }
-            if is_new:
-                self._notify("ENDPOINT_ADDED", event.guid, event)
+            self._notify(
+                "ENDPOINT_ADDED" if is_new else "ENDPOINT_UPDATED",
+                event.guid,
+                event,
+            )
 
         elif isinstance(event, EntityDisposed):
             if event.disposed_guid is None:

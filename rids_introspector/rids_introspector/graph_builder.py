@@ -67,9 +67,9 @@ class GraphBuilder:
                     self.graph.add_node(participant_id, node_type="participant", last_seen=now)
                 
                 # Ensure topic node exists
-                if not self.graph.has_node(event.topic):
-                    self._log(f"Creating new topic node: '{event.topic}'")
                 topic_id = f"topic:{event.topic}"
+                if not self.graph.has_node(topic_id):
+                    self._log(f"Creating new topic node: '{event.topic}'")
                 self.graph.add_node(topic_id, node_type="topic", type_name=event.type_name)
 
                 role = event.role
