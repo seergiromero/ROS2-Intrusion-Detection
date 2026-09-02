@@ -265,7 +265,7 @@ class RTPSParser:
 
         elif writer_id_hex in (SEDP_PUB_WRITER_ID, SEDP_SUB_WRITER_ID):
             raw_topic = all_params.get(PID_TOPIC_NAME, "unknown_topic")
-            topic_name = raw_topic[2:] if raw_topic.startswith(("rt/", "rr/")) else raw_topic
+            topic_name = raw_topic[2:] if raw_topic.startswith(("rt/", "rr/", "rq/")) else raw_topic
             type_name = all_params.get(PID_TYPE_NAME, "unknown_type")
             endpoint_guid = all_params.get(PID_ENDPOINT_GUID, f"{guid_prefix}:{writer_id_hex}")
             reliability = all_params.get(PID_RELIABILITY, "UNKNOWN")
