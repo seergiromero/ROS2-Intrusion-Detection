@@ -156,9 +156,21 @@ class TestEntityClassification:
         events = RTPSParser.parse_packet(self._wrap(submsg))
         assert events == []
 
-    def test_spdp_writer_produces_participant_discovered(self):
-        participant_guid = b"\x01\x0f\x39\x63\x48\x65\x43\x07\x00\x00\x00\x00\x00\x00\x01\xc1"
-        params = build_parameter_list([(PID_PARTICIPANT_GUID, participant_guid)])
+    def test_spdp_participant_guid_is_normalized_to_guid_prefix(self):
+        participant_guid = (
+            "01:0f:39:63:48:65:43:07:"
+            "00:00:00:00:00:00:01:c1"
+        )
+
+        params = build_parameter_list(
+            [
+                (
+                    PID_PARTICIPANT_GUID,
+                    bytes.fromhex(participant_guid.replace(":", "")),
+                )
+            ]
+        )
+
         submsg = build_data_submessage(
             reader_id=b"\x00\x00\x00\x00",
             writer_id=SPDP_PARTICIPANT_WRITER_ID,
@@ -166,9 +178,19 @@ class TestEntityClassification:
             flags=0x05,
             param_list_bytes=params,
         )
-        events = RTPSParser.parse_packet(self._wrap(submsg))
+
+        guid_prefix = bytes.fromhex(
+            "01:0f:39:63:48:65:43:07:00:00:00:00".replace(":", "")
+        )
+
+        events = RTPSParser.parse_packet(
+            build_rtps_packet(guid_prefix, [submsg])
+        )
+
         assert len(events) == 1
-        assert isinstance(events[0], ParticipantDiscovered)
+        assert events[0].guid_prefix == (
+            "01:0f:39:63:48:65:43:07:00:00:00:00"
+        )
 
 
 # ---------------------------------------------------------------------------

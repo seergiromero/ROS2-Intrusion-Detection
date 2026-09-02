@@ -25,7 +25,11 @@ SOFTWARE.
 import time
 import threading
 import networkx as nx
-from rids_introspector.rtps_parser import ParticipantDiscovered, EndpointDiscovered, EntityDisposed
+
+if __package__:
+    from .rtps_parser import ParticipantDiscovered, EndpointDiscovered, EntityDisposed
+else:
+    from rtps_parser import ParticipantDiscovered, EndpointDiscovered, EntityDisposed
 
 class GraphBuilder:
     def __init__(self, debug: bool = False):
@@ -65,10 +69,12 @@ class GraphBuilder:
                     self._log(f"Creating new topic node: '{event.topic}'")
                 self.graph.add_node(event.topic, node_type="topic", type_name=event.type_name)
 
-                # Determine direction
-                is_writer = getattr(event, 'is_writer', True)
-                role = "publisher" if is_writer else "subscriber"
-                src, dst = (event.guid_prefix, event.topic) if is_writer else (event.topic, event.guid_prefix)
+                role = event.role
+                src, dst = (
+                    (event.guid_prefix, event.topic)
+                    if role == "publisher"
+                    else (event.topic, event.guid_prefix)
+                )
 
                 self.graph.add_edge(
                     src, 

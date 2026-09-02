@@ -89,6 +89,7 @@ class EndpointDiscovered:
     topic: str
     type_name: str
     qos: dict[str, str]
+    role: str
 
 
 @dataclasses.dataclass
@@ -251,17 +252,23 @@ class RTPSParser:
 
         # 4. Routing based ONLY on Writer Entity ID
         if writer_id_hex in SPDP_WRITER_ENTITY_IDS:
-            part_guid = all_params.get(PID_PARTICIPANT_GUID, guid_prefix)
+            part_guid = all_params.get(PID_PARTICIPANT_GUID)
+            part_prefix = (
+                ":".join(part_guid.split(":")[:12])
+                if part_guid
+                else guid_prefix
+            )
+
             lease_sec = all_params.get(PID_PARTICIPANT_LEASE_DURATION, 20.0)
 
             if debug and logger:
                 logger.debug(
                     f"    │   └── [SPDP PARTICIPANT DISCOVERY]\n"
-                    f"    │       ├── GUID          : {part_guid}\n"
+                    f"    │       ├── GUID          : {part_prefix}\n"
                     f"    │       └── Vendor ID     : 0x{vendor_id}"
                 )
 
-            return ParticipantDiscovered(guid_prefix=part_guid, vendor_id=vendor_id, lease_duration=lease_sec)
+            return ParticipantDiscovered(guid_prefix=part_prefix, vendor_id=vendor_id, lease_duration=lease_sec)
 
         elif writer_id_hex in (SEDP_PUB_WRITER_ID, SEDP_SUB_WRITER_ID):
             raw_topic = all_params.get(PID_TOPIC_NAME, "unknown_topic")
@@ -270,6 +277,7 @@ class RTPSParser:
             endpoint_guid = all_params.get(PID_ENDPOINT_GUID, f"{guid_prefix}:{writer_id_hex}")
             reliability = all_params.get(PID_RELIABILITY, "UNKNOWN")
             durability = all_params.get(PID_DURABILITY, "UNKNOWN")
+            role = "publisher" if writer_id_hex == SEDP_PUB_WRITER_ID else "subscriber"
 
             if debug and logger:
                 logger.debug(
@@ -277,6 +285,7 @@ class RTPSParser:
                     f"    │       ├── Endpoint GUID : {endpoint_guid}\n"
                     f"    │       ├── Topic Name    : '{topic_name}' (Raw: '{raw_topic}')\n"
                     f"    │       ├── Type Name     : '{type_name}'\n"
+                    f"    │       ├── Role          : {role}\n"
                     f"    │       ├── QoS Settings  : Reliability={reliability} | Durability={durability}\n"
                     f"    │       └── Origin Prefix : {guid_prefix}"
                 )
@@ -290,6 +299,7 @@ class RTPSParser:
                     "reliability": reliability,
                     "durability": durability,
                 },
+                role=role,
             )
 
         return None

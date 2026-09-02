@@ -187,6 +187,7 @@ REAL_CAPTURES: list[RealCapture] = [
             "guid_prefix": "01:0f:39:63:48:65:43:07:00:00:00:00",
             "topic": "/navigate_to_pose/_action/send_goalReply",
             "type_name": "nav2_msgs::action::dds_::NavigateToPose_SendGoal_Response_",
+            "role": "subscriber",
             "qos": {
                 "reliability": "RELIABLE",
                 "durability": "VOLATILE",
@@ -203,6 +204,7 @@ REAL_CAPTURES: list[RealCapture] = [
             "guid_prefix": "01:0f:39:63:48:65:43:07:00:00:00:00",
             "topic": "/bond",
             "type_name": "bond::msg::dds_::Status_",
+            "role": "publisher",
             "qos": {
                 "reliability": "RELIABLE",
                 "durability": "VOLATILE",
@@ -215,7 +217,7 @@ REAL_CAPTURES: list[RealCapture] = [
         hex_payload=_SPDP_PARTICIPANT_HEX,
         expected_event_type="ParticipantDiscovered",
         expected_fields={
-            "guid_prefix": "01:0f:39:63:49:65:51:3e:00:00:00:00:00:00:01:c1",
+            "guid_prefix": "01:0f:39:63:49:65:51:3e:00:00:00:00",
             "vendor_id": "010f",
             "lease_duration": 20.0,
         },
