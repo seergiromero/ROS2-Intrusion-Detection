@@ -161,6 +161,7 @@ class RTPSSniffer:
             if event.disposed_guid is None:
                 return
 
+            notifications: list[tuple[str, str, Any]] = []
             with self._lock:
                 if event.is_participant:
                     participant_removed = event.disposed_guid in self.discovered_participants
@@ -169,20 +170,27 @@ class RTPSSniffer:
                     for k in removed:
                         self.discovered_endpoints.pop(k, None)
                     if participant_removed:
-                        self._notify("PARTICIPANT_DISPOSED", event.disposed_guid, event)
+                        notifications.append(("PARTICIPANT_DISPOSED", event.disposed_guid, event))
                     for endpoint_guid in removed:
-                        self._notify("ENDPOINT_DISPOSED", endpoint_guid, EntityDisposed(
-                            guid_prefix=event.guid_prefix,
-                            writer_id=event.writer_id,
-                            seq_num=event.seq_num,
-                            disposed_guid=endpoint_guid,
-                            is_participant=False,
+                        notifications.append((
+                            "ENDPOINT_DISPOSED",
+                            endpoint_guid,
+                            EntityDisposed(
+                                guid_prefix=event.guid_prefix,
+                                writer_id=event.writer_id,
+                                seq_num=event.seq_num,
+                                disposed_guid=endpoint_guid,
+                                is_participant=False,
+                            ),
                         ))
                 else:
                     endpoint_removed = event.disposed_guid in self.discovered_endpoints
                     self.discovered_endpoints.pop(event.disposed_guid, None)
                     if endpoint_removed:
-                        self._notify("ENDPOINT_DISPOSED", event.disposed_guid, event)
+                        notifications.append(("ENDPOINT_DISPOSED", event.disposed_guid, event))
+
+            for kind, identifier, notification_event in notifications:
+                self._notify(kind, identifier, notification_event)
 
     def _notify(self, kind: str, identifier: str, event: Any) -> None:
         """Supports the current event callback and the legacy two-argument form."""
