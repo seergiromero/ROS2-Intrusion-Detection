@@ -24,6 +24,7 @@ SOFTWARE.
 
 
 from collections.abc import Callable
+import inspect
 import logging
 import threading
 import time
@@ -31,7 +32,10 @@ from typing import Any, Optional
 import copy
 from scapy.all import AsyncSniffer, IP, UDP, Packet
 
-from rtps_parser import EndpointDiscovered, EntityDisposed, ParticipantDiscovered, RTPSParser
+if __package__:
+    from .rtps_parser import EndpointDiscovered, EntityDisposed, ParticipantDiscovered, RTPSParser
+else:
+    from rtps_parser import EndpointDiscovered, EntityDisposed, ParticipantDiscovered, RTPSParser
 
 
 class RTPSSniffer:
@@ -136,8 +140,8 @@ class RTPSSniffer:
                     "last_seen": now,
                     "lease_duration": event.lease_duration,
                 }
-            if is_new and self.on_update_callback:
-                self.on_update_callback("PARTICIPANT_ADDED", event.guid_prefix)
+            if is_new:
+                self._notify("PARTICIPANT_ADDED", event.guid_prefix, event)
 
         elif isinstance(event, EndpointDiscovered):
             with self._lock:
@@ -150,8 +154,8 @@ class RTPSSniffer:
                     "qos": event.qos,
                     "last_seen": now,
                 }
-            if is_new and self.on_update_callback:
-                self.on_update_callback("ENDPOINT_ADDED", event.guid)
+            if is_new:
+                self._notify("ENDPOINT_ADDED", event.guid, event)
 
         elif isinstance(event, EntityDisposed):
             if event.disposed_guid is None:
@@ -159,21 +163,45 @@ class RTPSSniffer:
 
             with self._lock:
                 if event.is_participant:
-                    if event.disposed_guid in self.discovered_participants:
-                        del self.discovered_participants[event.disposed_guid]
-                        if self.on_update_callback:
-                            self.on_update_callback("PARTICIPANT_DISPOSED", event.disposed_guid)
-
+                    participant_removed = event.disposed_guid in self.discovered_participants
+                    self.discovered_participants.pop(event.disposed_guid, None)
                     removed = [k for k, v in self.discovered_endpoints.items() if v["guid_prefix"] == event.disposed_guid]
                     for k in removed:
-                        del self.discovered_endpoints[k]
-                        if self.on_update_callback:
-                            self.on_update_callback("ENDPOINT_DISPOSED", k)
+                        self.discovered_endpoints.pop(k, None)
+                    if participant_removed:
+                        self._notify("PARTICIPANT_DISPOSED", event.disposed_guid, event)
+                    for endpoint_guid in removed:
+                        self._notify("ENDPOINT_DISPOSED", endpoint_guid, EntityDisposed(
+                            guid_prefix=event.guid_prefix,
+                            writer_id=event.writer_id,
+                            seq_num=event.seq_num,
+                            disposed_guid=endpoint_guid,
+                            is_participant=False,
+                        ))
                 else:
-                    if event.disposed_guid in self.discovered_endpoints:
-                        del self.discovered_endpoints[event.disposed_guid]
-                        if self.on_update_callback:
-                            self.on_update_callback("ENDPOINT_DISPOSED", event.disposed_guid)
+                    endpoint_removed = event.disposed_guid in self.discovered_endpoints
+                    self.discovered_endpoints.pop(event.disposed_guid, None)
+                    if endpoint_removed:
+                        self._notify("ENDPOINT_DISPOSED", event.disposed_guid, event)
+
+    def _notify(self, kind: str, identifier: str, event: Any) -> None:
+        """Supports the current event callback and the legacy two-argument form."""
+        callback = self.on_update_callback
+        if callback is None:
+            return
+
+        try:
+            parameters = inspect.signature(callback).parameters.values()
+            accepts_two_arguments = len(parameters) >= 2 or any(
+                parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters
+            )
+        except (TypeError, ValueError):
+            accepts_two_arguments = False
+
+        if accepts_two_arguments:
+            callback(kind, identifier)
+        else:
+            callback(event)
 
     def _lease_reaper_loop(self) -> None:
         """Periodically removes silent nodes whose leaseDuration has expired."""
@@ -181,27 +209,50 @@ class RTPSSniffer:
         while self.running:
             time.sleep(2.0)
             now = time.time()
-            expired_participants = []
+            expired_events: list[tuple[str, str, EntityDisposed]] = []
 
             with self._lock:
-                for guid, data in self.discovered_participants.items():
-                    if now - data["last_seen"] > data["lease_duration"]:
-                        expired_participants.append(guid)
+                expired_participants = [
+                    guid for guid, data in self.discovered_participants.items()
+                    if now - data["last_seen"] > data["lease_duration"]
+                ]
 
                 for guid in expired_participants:
+
                     del self.discovered_participants[guid]
-                    # Also purge associated endpoints
                     endpoints_to_remove = [
-                        e_guid for e_guid, e in self.discovered_endpoints.items() if e["guid_prefix"] == guid
+                        e_guid for e_guid, e in self.discovered_endpoints.items() 
+                        if e["guid_prefix"] == guid
                     ]
+                    
                     for e_guid in endpoints_to_remove:
                         del self.discovered_endpoints[e_guid]
-                        if self.on_update_callback:
-                            self.on_update_callback("ENDPOINT_EXPIRED", e_guid)
-
+                        expired_events.append((
+                            "ENDPOINT_EXPIRED",
+                            e_guid,
+                            EntityDisposed(
+                                disposed_guid=e_guid,
+                                guid_prefix=guid,
+                                writer_id="unknown",
+                                seq_num=0,
+                                is_participant=False,
+                            ),
+                        ))
                     self.logger.warning(f"Participant {guid} expired (leaseDuration timeout). Purged from state.")
-                    if self.on_update_callback:
-                        self.on_update_callback("PARTICIPANT_EXPIRED", guid)
+                    expired_events.append((
+                        "PARTICIPANT_EXPIRED",
+                        guid,
+                        EntityDisposed(
+                            disposed_guid=guid,
+                            guid_prefix=guid,
+                            writer_id="unknown",
+                            seq_num=0,
+                            is_participant=True,
+                        ),
+                    ))
+
+            for kind, identifier, event in expired_events:
+                self._notify(kind, identifier, event)
     
     def get_captured_state(self) -> dict[str, dict[str, Any]]:
         """Returns a thread-safe copy of the captured state."""
