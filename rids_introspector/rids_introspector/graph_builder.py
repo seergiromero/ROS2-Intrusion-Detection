@@ -33,7 +33,7 @@ else:
 
 class GraphBuilder:
     def __init__(self, debug: bool = False):
-        self.graph = nx.DiGraph()
+        self.graph = nx.MultiDiGraph()
         self.debug = debug
         self._lock = threading.Lock()
 
@@ -47,8 +47,9 @@ class GraphBuilder:
             
             if isinstance(event, ParticipantDiscovered):
                 self._log(f"Participant Discovered: GUID Prefix = {event.guid_prefix} | Vendor ID = {event.vendor_id}")
+                participant_id = f"participant:{event.guid_prefix}"
                 self.graph.add_node(
-                    event.guid_prefix,
+                    participant_id,
                     node_type="participant",
                     vendor_id=event.vendor_id,
                     last_seen=now,
@@ -60,29 +61,33 @@ class GraphBuilder:
                 self._log(f"Endpoint Discovered: GUID = {event.guid} | Topic = {event.topic} | Type = {event.type_name}")
                 
                 # Ensure participant node exists
-                if not self.graph.has_node(event.guid_prefix):
+                participant_id = f"participant:{event.guid_prefix}"
+                if not self.graph.has_node(participant_id):
                     self._log(f"Participant '{event.guid_prefix}' not found in graph. Creating implicit participant node.")
-                    self.graph.add_node(event.guid_prefix, node_type="participant", last_seen=now)
+                    self.graph.add_node(participant_id, node_type="participant", last_seen=now)
                 
                 # Ensure topic node exists
                 if not self.graph.has_node(event.topic):
                     self._log(f"Creating new topic node: '{event.topic}'")
-                self.graph.add_node(event.topic, node_type="topic", type_name=event.type_name)
+                topic_id = f"topic:{event.topic}"
+                self.graph.add_node(topic_id, node_type="topic", type_name=event.type_name)
 
                 role = event.role
                 src, dst = (
-                    (event.guid_prefix, event.topic)
+                    (participant_id, topic_id)
                     if role == "publisher"
-                    else (event.topic, event.guid_prefix)
+                    else (topic_id, participant_id)
                 )
 
                 self.graph.add_edge(
-                    src, 
-                    dst, 
-                    guid=event.guid, 
-                    qos=event.qos, 
+                    src,
+                    dst,
+                    key=event.guid,
+                    guid=event.guid,
+                    qos=event.qos,
                     role=role,
-                    last_seen=now
+                    type_name=event.type_name,
+                    last_seen=now,
                 )
                 self._log(f"Added edge [{role.upper()}]: {src} -> {dst}")
 
@@ -97,30 +102,28 @@ class GraphBuilder:
 
     def _handle_disposal(self, event):
         if event.is_participant:
-            if self.graph.has_node(event.guid_prefix):
-                self.graph.remove_node(event.guid_prefix)
-                self._log(f"Removed participant node '{event.guid_prefix}' and all connected edges.")
+            participant_id = f"participant:{event.guid_prefix}"
+            if self.graph.has_node(participant_id):
+                self.graph.remove_node(participant_id)
+                self._log(f"Removed participant node '{participant_id}' and all connected edges.")
             else:
-                self._log(f"Cannot remove participant '{event.guid_prefix}': Not found in graph.")
+                self._log(f"Cannot remove participant '{participant_id}': Not found in graph.")
         else:
             if event.disposed_guid is None:
                 self._log("Disposed GUID is None for endpoint disposal. Skipping.")
                 return
 
-            if self.graph.has_node(event.guid_prefix):
-                edges_to_remove = [
-                    (u, v) for u, v, data in self.graph.edges(event.guid_prefix, data=True)
-                    if data.get('guid') == event.disposed_guid
-                ] + [
-                    (u, v) for u, v, data in self.graph.in_edges(event.guid_prefix, data=True)
-                    if data.get('guid') == event.disposed_guid
-                ]
-                
-                if edges_to_remove:
-                    self.graph.remove_edges_from(edges_to_remove)
-                    self._log(f"Removed {len(edges_to_remove)} edge(s) matching endpoint GUID '{event.disposed_guid}'.")
-                else:
-                    self._log(f"No matching edge found for disposed endpoint GUID '{event.disposed_guid}'.")
+            edges_to_remove = [
+                (u, v, key)
+                for u, v, key, data in self.graph.edges(data=True, keys=True)
+                if data.get("guid") == event.disposed_guid
+            ]
+
+            if edges_to_remove:
+                self.graph.remove_edges_from(edges_to_remove)
+                self._log(f"Removed {len(edges_to_remove)} edge(s) matching endpoint GUID '{event.disposed_guid}'.")
+            else:
+                self._log(f"No matching edge found for disposed endpoint GUID '{event.disposed_guid}'.")
 
         # Purge orphan topics
         topics_to_remove = [
@@ -142,11 +145,12 @@ class GraphBuilder:
                 {"id": n, **d} for n, d in self.graph.nodes(data=True)
             ],
             "edges": [
-                {"source": u, "target": v, **d} for u, v, d in self.graph.edges(data=True)
+                {"source": u, "target": v, "key": key, **d}
+                for u, v, key, d in self.graph.edges(data=True, keys=True)
             ]
         }
 
-    def get_graph_copy(self) -> nx.DiGraph:
+    def get_graph_copy(self) -> nx.MultiDiGraph:
         """Returns a thread-safe copy of the graph for the visualizer."""
 
         with self._lock:
