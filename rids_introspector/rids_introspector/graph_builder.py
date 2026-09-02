@@ -135,20 +135,21 @@ class GraphBuilder:
             self._log(f"Purged {len(topics_to_remove)} orphan topic node(s): {topics_to_remove}")
 
     def get_snapshot_dict(self) -> dict:
-        return {
-            "stats": {
-                "num_participants": sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "participant"),
-                "num_topics": sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "topic"),
-                "num_edges": self.graph.number_of_edges(),
-            },
-            "nodes": [
-                {"id": n, **d} for n, d in self.graph.nodes(data=True)
-            ],
-            "edges": [
-                {"source": u, "target": v, "key": key, **d}
-                for u, v, key, d in self.graph.edges(data=True, keys=True)
-            ]
-        }
+        with self._lock:
+            return {
+                "stats": {
+                    "num_participants": sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "participant"),
+                    "num_topics": sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "topic"),
+                    "num_edges": self.graph.number_of_edges(),
+                },
+                "nodes": [
+                    {"id": n, **d} for n, d in self.graph.nodes(data=True)
+                ],
+                "edges": [
+                    {"source": u, "target": v, "key": key, **d}
+                    for u, v, key, d in self.graph.edges(data=True, keys=True)
+                ]
+            }
 
     def get_graph_copy(self) -> nx.MultiDiGraph:
         """Returns a thread-safe copy of the graph for the visualizer."""
