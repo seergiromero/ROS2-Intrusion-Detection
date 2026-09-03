@@ -18,6 +18,7 @@ setup(
         'setuptools',
         'networkx',
         'matplotlib',
+        'scapy',
     ],
     zip_safe=True,
     maintainer='Sergi Romero Valderas',
