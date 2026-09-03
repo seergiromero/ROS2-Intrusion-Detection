@@ -30,6 +30,7 @@ from rids_introspector.graph_builder import GraphBuilder
 from rids_introspector.graph_visualizer import GraphVisualizer
 from rids_introspector.rtps_sniffer import RTPSSniffer
 from rids_introspector.snapshot_logger import SnapshotLogger
+from rids_introspector.terminal_visualizer import TerminalVisualizer
 
 
 def main():
@@ -38,8 +39,10 @@ def main():
     parser.add_argument("--port-filter", default="udp portrange 7400-7600", help="BPF capture filter; use '' to disable")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--gui", action="store_true", help="Enable live Matplotlib graph")
+    parser.add_argument("--no-terminal", action="store_true", help="Disable terminal visualization")
     parser.add_argument("--log-file", default="snapshots.jsonl", help="Output path for snapshots")
     parser.add_argument("--interval", type=float, default=1.0, help="Snapshot interval in seconds (default: 1.0)")
+    parser.add_argument("--table-width", type=int, default=150, help="Terminal table width in characters (default: 150)")
     args = parser.parse_args()
 
     builder = GraphBuilder(debug=args.debug)
@@ -74,6 +77,12 @@ def main():
 
         if args.gui:
             GraphVisualizer(builder, interval_ms=int(args.interval * 1000)).start()
+        elif not args.no_terminal:
+            TerminalVisualizer(
+                builder,
+                interval=args.interval,
+                table_width=args.table_width,
+            ).run(shutdown_event)
         else:
             while not shutdown_event.wait(1.0):
                 pass
