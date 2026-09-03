@@ -33,13 +33,24 @@ from rids_introspector.snapshot_logger import SnapshotLogger
 from rids_introspector.terminal_visualizer import TerminalVisualizer
 
 
+def parse_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="RIDS Network Introspector")
     parser.add_argument("--interface", default="lo", help="Network interface (default: lo)")
     parser.add_argument("--port-filter", default="udp portrange 7400-7600", help="BPF capture filter; use '' to disable")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--gui", action="store_true", help="Enable live Matplotlib graph")
-    parser.add_argument("--no-terminal", action="store_true", help="Disable terminal visualization")
+    parser.add_argument("--debug", nargs="?", const=True, default=False, type=parse_bool, help="Enable debug logging")
+    parser.add_argument("--gui", nargs="?", const=True, default=False, type=parse_bool, help="Enable live Matplotlib graph")
+    parser.add_argument("--no-terminal", nargs="?", const=True, default=False, type=parse_bool, help="Disable terminal visualization")
     parser.add_argument("--log-file", default="snapshots.jsonl", help="Output path for snapshots")
     parser.add_argument("--interval", type=float, default=1.0, help="Snapshot interval in seconds (default: 1.0)")
     parser.add_argument("--table-width", type=int, default=150, help="Terminal table width in characters (default: 150)")
