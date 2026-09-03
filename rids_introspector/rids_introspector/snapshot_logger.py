@@ -23,12 +23,16 @@ SOFTWARE.
 """
 
 import json
-import time
 import threading
+import time
+from pathlib import Path
 from typing import Optional
 
 class SnapshotLogger:
     def __init__(self, graph_builder, output_file: str = "snapshots.jsonl", interval: float = 1.0):
+        if interval <= 0:
+            raise ValueError("Snapshot interval must be greater than zero")
+
         self.graph_builder = graph_builder
         self.output_file = output_file
         self.interval = interval
@@ -37,6 +41,9 @@ class SnapshotLogger:
         self._snapshot_count = 0
 
     def start(self):
+        if self._running:
+            return
+
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -47,7 +54,10 @@ class SnapshotLogger:
             self._thread.join()
 
     def _run(self):
-        with open(self.output_file, "a", encoding="utf-8") as f:
+        output_path = Path(self.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with output_path.open("a", encoding="utf-8") as f:
             while self._running:
                 snapshot = self.graph_builder.get_snapshot_dict()
                 record = {

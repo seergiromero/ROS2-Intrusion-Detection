@@ -24,6 +24,8 @@ SOFTWARE.
 
 import json
 
+import pytest
+
 import snapshot_logger
 from graph_builder import GraphBuilder
 from rtps_parser import EndpointDiscovered
@@ -31,7 +33,7 @@ from snapshot_logger import SnapshotLogger
 
 
 def test_logger_writes_one_valid_jsonl_snapshot(tmp_path, monkeypatch):
-    output_file = tmp_path / "snapshots.jsonl"
+    output_file = tmp_path / "nested" / "run" / "snapshots.jsonl"
     builder = GraphBuilder()
     builder.process_event(
         EndpointDiscovered("endpoint-guid", "participant-a", "/scan", "type", {}, "publisher")
@@ -50,3 +52,23 @@ def test_logger_writes_one_valid_jsonl_snapshot(tmp_path, monkeypatch):
     record = json.loads(lines[0])
     assert record["snapshot_id"] == 0
     assert record["graph"]["stats"]["num_edges"] == 1
+
+
+def test_logger_appends_to_existing_jsonl_file(tmp_path, monkeypatch):
+    output_file = tmp_path / "snapshots.jsonl"
+    output_file.write_text('{"previous": true}\n', encoding="utf-8")
+    logger = SnapshotLogger(GraphBuilder(), output_file=str(output_file), interval=1.0)
+
+    monkeypatch.setattr(snapshot_logger.time, "sleep", lambda _interval: setattr(logger, "_running", False))
+    logger._running = True
+    logger._run()
+
+    lines = output_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0]) == {"previous": True}
+    assert json.loads(lines[1])["snapshot_id"] == 0
+
+
+def test_logger_rejects_non_positive_interval():
+    with pytest.raises(ValueError):
+        SnapshotLogger(GraphBuilder(), interval=0)
