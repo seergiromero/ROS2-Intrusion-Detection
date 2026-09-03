@@ -24,39 +24,62 @@ SOFTWARE.
 
 import argparse
 import signal
-import sys
-from rids_introspector.rtps_sniffer import RTPSSniffer
+import threading
+
 from rids_introspector.graph_builder import GraphBuilder
-from rids_introspector.snapshot_logger import SnapshotLogger
 from rids_introspector.graph_visualizer import GraphVisualizer
+from rids_introspector.rtps_sniffer import RTPSSniffer
+from rids_introspector.snapshot_logger import SnapshotLogger
+
 
 def main():
     parser = argparse.ArgumentParser(description="RIDS Network Introspector")
     parser.add_argument("--interface", default="lo", help="Network interface (default: lo)")
-    parser.add_argument("--debug", default="False")
+    parser.add_argument("--port-filter", default="udp portrange 7400-7600", help="BPF capture filter; use '' to disable")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--gui", action="store_true", help="Enable live Matplotlib graph")
     parser.add_argument("--log-file", default="snapshots.jsonl", help="Output path for snapshots")
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--interval", type=float, default=1.0, help="Snapshot interval in seconds (default: 1.0)")
+    args = parser.parse_args()
 
-    # 1. Instanciar componentes
-    builder = GraphBuilder()
-    
-    # Nota: usa args.log_file con guion bajo
-    logger = SnapshotLogger(builder, output_file=args.log_file)
-    
-    # Corregido: parámetro 'on_update_callback'
+    builder = GraphBuilder(debug=args.debug)
+    logger = SnapshotLogger(
+        builder,
+        output_file=args.log_file,
+        interval=args.interval,
+    )
     sniffer = RTPSSniffer(
-        interface=args.interface, 
-        on_update_callback=builder.process_event
+        interface=args.interface,
+        port_filter=args.port_filter or None,
+        on_update_callback=builder.process_event,
+        debug=args.debug,
+    )
+    shutdown_event = threading.Event()
+
+    def request_shutdown(signum, frame):
+        shutdown_event.set()
+
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
+
+    print(
+        f"RIDS introspector: interface={args.interface}, "
+        f"port_filter={args.port_filter or 'disabled'}, "
+        f"interval={args.interval}s, gui={args.gui}"
     )
 
-    # 2. Iniciar tareas en segundo plano
-    logger.start()
-    sniffer.start()  # AsyncSniffer ya se lanza asíncronamente
+    try:
+        logger.start()
+        sniffer.start()
 
-    # 3. Hilo principal: GUI o Bucle de espera
-    visualizer = GraphVisualizer(builder)
-    visualizer.start()  # Bloqueante (Matplotlib GUI)
+        if args.gui:
+            GraphVisualizer(builder, interval_ms=int(args.interval * 1000)).start()
+        else:
+            while not shutdown_event.wait(1.0):
+                pass
+    finally:
+        sniffer.stop()
+        logger.stop()
 
 if __name__ == "__main__":
     main()
