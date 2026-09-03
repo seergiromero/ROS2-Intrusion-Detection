@@ -47,10 +47,12 @@ class RTPSSniffer:
     def __init__(
         self,
         interface: Optional[str] = None,
+        port_filter: Optional[str] = "udp portrange 7400-7600",
         on_update_callback: Optional[Callable] = None,
         debug: bool = False,
     ):
         self.interface = interface
+        self.port_filter = port_filter
         self.on_update_callback = on_update_callback
         self.debug = debug
 
@@ -78,7 +80,7 @@ class RTPSSniffer:
 
             # AsyncSniffer handles background thread and immediate stop() natively
             self._sniffer = AsyncSniffer(
-                filter="udp portrange 7400-7600",
+                filter=self.port_filter,
                 prn=self._process_packet,
                 iface=self.interface,
                 store=False,
