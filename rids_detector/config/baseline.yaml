@@ -1,0 +1,28 @@
+version: 1
+created_at: "2026-09-03T00:00:00Z"
+source: "normal_session_talker_listener"
+critical_topics:
+  - /cmd_vel
+  - /scan
+  - /goal_pose
+  - /tf
+participants:
+  - "01:0f:39:63:83:58:bf:0c:00:00:00:00"
+  - "01:0f:39:63:9f:49:46:ed:00:00:00:00"
+endpoints:
+  - guid: "01:0f:39:63:83:58:bf:0c:00:00:00:00:00:03:02"
+    participant: "01:0f:39:63:83:58:bf:0c:00:00:00:00"
+    topic: /chatter
+    role: publisher
+    type_name: "std_msgs::msg::dds_::String_"
+    qos:
+      reliability: RELIABLE
+      durability: VOLATILE
+  - guid: "01:0f:39:63:9f:49:46:ed:00:00:00:00:00:04:02"
+    participant: "01:0f:39:63:9f:49:46:ed:00:00:00:00"
+    topic: /chatter
+    role: subscriber
+    type_name: "std_msgs::msg::dds_::String_"
+    qos:
+      reliability: RELIABLE
+      durability: VOLATILE
