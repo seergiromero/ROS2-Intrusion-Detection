@@ -52,16 +52,17 @@ def test_render_shows_publishers_subscribers_and_qos():
     )
     output = StringIO()
 
-    TerminalVisualizer(builder, output=output, table_width=100).render()
+    TerminalVisualizer(builder, output=output, table_width=150).render()
 
     rendered = output.getvalue()
     assert "Participants: 2 | Topics: 1 | Endpoints: 2" in rendered
     assert "PUBLISHERS" in rendered
     assert "PUBLISHERS (1)" in rendered
     assert "SUBSCRIBERS (1)" in rendered
-    assert rendered.count("=" * 100) == 2
-    assert "participant:participant-pub | topic:/scan" in rendered
-    assert "topic:/scan | participant:participant-sub" in rendered
+    assert rendered.count("=" * 150) == 2
+    assert "participant:participant-pub" in rendered
+    assert "topic:/scan" in rendered
+    assert "participant:participant-sub" in rendered
     assert "reliability=RELIABLE" in rendered
     assert "reliability=BEST_EFFORT" in rendered
 
@@ -74,3 +75,22 @@ def test_render_handles_empty_graph():
     rendered = output.getvalue()
     assert "Participants: 0 | Topics: 0 | Endpoints: 0" in rendered
     assert rendered.count("(none)") == 2
+
+
+def test_render_truncates_values_that_do_not_fit():
+    builder = GraphBuilder()
+    builder.process_event(
+        EndpointDiscovered(
+            "endpoint-guid",
+            "participant-with-a-very-long-identifier",
+            "/scan",
+            "sensor_msgs/msg/LaserScan",
+            {},
+            "publisher",
+        )
+    )
+    output = StringIO()
+
+    TerminalVisualizer(builder, output=output, table_width=100).render()
+
+    assert "participant:partici..." in output.getvalue()

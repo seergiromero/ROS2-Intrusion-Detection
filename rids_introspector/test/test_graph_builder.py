@@ -136,6 +136,27 @@ def test_repeated_endpoint_updates_the_existing_edge():
     assert edge["qos"] == {"reliability": "RELIABLE"}
 
 
+def test_distinct_endpoints_between_same_nodes_are_preserved():
+    builder = GraphBuilder()
+    for endpoint_guid in ("endpoint-a", "endpoint-b"):
+        builder.process_event(
+            EndpointDiscovered(
+                guid=endpoint_guid,
+                guid_prefix="participant-a",
+                topic="/scan",
+                type_name="sensor_msgs/msg/LaserScan",
+                qos={"reliability": "RELIABLE"},
+                role="publisher",
+            )
+        )
+
+    assert builder.graph.number_of_edges("participant:participant-a", "topic:/scan") == 2
+    assert set(builder.graph["participant:participant-a"]["topic:/scan"]) == {
+        "endpoint-a",
+        "endpoint-b",
+    }
+
+
 def test_shared_topic_survives_until_its_last_endpoint_is_removed():
     builder = GraphBuilder()
     for participant, endpoint in (("participant-a", "endpoint-a"), ("participant-b", "endpoint-b")):
@@ -169,6 +190,24 @@ def test_snapshot_is_json_serializable_and_contains_edge_keys():
 
     assert snapshot["edges"][0]["key"] == "endpoint-guid"
     assert snapshot["edges"][0]["guid"] == "endpoint-guid"
+
+
+def test_snapshot_preserves_endpoint_qos_and_role():
+    builder = GraphBuilder()
+    builder.process_event(
+        EndpointDiscovered(
+            "endpoint-guid",
+            "participant-a",
+            "/scan",
+            "sensor_msgs/msg/LaserScan",
+            {"reliability": "RELIABLE", "durability": "VOLATILE"},
+            "subscriber",
+        )
+    )
+
+    edge = builder.get_snapshot_dict()["edges"][0]
+    assert edge["role"] == "subscriber"
+    assert edge["qos"] == {"reliability": "RELIABLE", "durability": "VOLATILE"}
 
 
 def test_snapshot_can_run_while_events_are_processed():
