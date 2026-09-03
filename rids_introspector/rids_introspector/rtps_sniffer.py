@@ -67,6 +67,7 @@ class RTPSSniffer:
         self._sniffer: Optional[AsyncSniffer] = None
         self._reaper_thread: Optional[threading.Thread] = None
         self.running = False
+        self._stop_event = threading.Event()
 
         self.discovered_participants: dict[str, dict[str, Any]] = {}
         self.discovered_endpoints: dict[str, dict[str, Any]] = {}
@@ -76,6 +77,7 @@ class RTPSSniffer:
             if self.running:
                 self.logger.warning("Sniffer is already running.")
                 return
+            self._stop_event.clear()
             self.running = True
 
             # AsyncSniffer handles background thread and immediate stop() natively
@@ -85,7 +87,12 @@ class RTPSSniffer:
                 iface=self.interface,
                 store=False,
             )
-            self._sniffer.start()
+            try:
+                self._sniffer.start()
+            except Exception:
+                self.running = False
+                self._sniffer = None
+                raise
 
             # Background thread to clean expired leaseDurations
             self._reaper_thread = threading.Thread(target=self._lease_reaper_loop, daemon=True)
@@ -98,9 +105,18 @@ class RTPSSniffer:
             if not self.running:
                 return
             self.running = False
-            if self._sniffer:
-                self._sniffer.stop()
-            self.logger.info("RTPS Sniffer stopped cleanly.")
+            self._stop_event.set()
+            sniffer = self._sniffer
+            reaper_thread = self._reaper_thread
+
+        # Stop external/background components outside the state lock. Scapy
+        # may wait for an in-flight packet callback to finish.
+        if sniffer:
+            sniffer.stop()
+        if reaper_thread and reaper_thread is not threading.current_thread():
+            reaper_thread.join(timeout=3.0)
+
+        self.logger.info("RTPS Sniffer stopped cleanly.")
 
     def _process_packet(self, packet: Packet) -> None:
         """Exception-safe packet wrapper preventing thread crashes."""
@@ -215,16 +231,18 @@ class RTPSSniffer:
         except (TypeError, ValueError):
             accepts_two_arguments = False
 
-        if accepts_two_arguments:
-            callback(kind, identifier)
-        else:
-            callback(event)
+        try:
+            if accepts_two_arguments:
+                callback(kind, identifier)
+            else:
+                callback(event)
+        except Exception:
+            self.logger.exception("Update callback failed")
 
     def _lease_reaper_loop(self) -> None:
         """Periodically removes silent nodes whose leaseDuration has expired."""
 
-        while self.running:
-            time.sleep(2.0)
+        while not self._stop_event.wait(2.0):
             now = time.time()
             expired_events: list[tuple[str, str, EntityDisposed]] = []
 

@@ -23,6 +23,7 @@ SOFTWARE.
 """
 
 import time
+from typing import ClassVar
 
 import pytest
 from scapy.all import IP, UDP, Raw
@@ -53,6 +54,113 @@ def callback_log():
         events.append((kind, ident))
 
     return events, cb
+
+
+class FakeAsyncSniffer:
+    instances: ClassVar[list["FakeAsyncSniffer"]] = []
+    fail_on_start = False
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.instances.append(self)
+
+    def start(self):
+        self.start_calls += 1
+        if self.fail_on_start:
+            raise PermissionError("capture permission denied")
+
+    def stop(self):
+        self.stop_calls += 1
+
+
+@pytest.fixture
+def fake_sniffer(monkeypatch):
+    FakeAsyncSniffer.instances = []
+    FakeAsyncSniffer.fail_on_start = False
+    monkeypatch.setattr(rtps_sniffer, "AsyncSniffer", FakeAsyncSniffer)
+    return FakeAsyncSniffer
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+class TestLifecycle:
+    def test_start_creates_capture_and_reaper(self, fake_sniffer):
+        sniffer = RTPSSniffer(interface="lo", port_filter=None)
+
+        sniffer.start()
+
+        assert sniffer.running is True
+        assert len(fake_sniffer.instances) == 1
+        assert fake_sniffer.instances[0].start_calls == 1
+        assert sniffer._reaper_thread is not None
+        assert sniffer._reaper_thread.is_alive()
+
+        sniffer.stop()
+
+    def test_start_is_idempotent_while_running(self, fake_sniffer):
+        sniffer = RTPSSniffer(interface="lo")
+
+        sniffer.start()
+        sniffer.start()
+
+        assert len(fake_sniffer.instances) == 1
+        assert fake_sniffer.instances[0].start_calls == 1
+
+        sniffer.stop()
+
+    def test_stop_stops_capture_and_waits_for_reaper(self, fake_sniffer):
+        sniffer = RTPSSniffer(interface="lo")
+        sniffer.start()
+        capture = fake_sniffer.instances[0]
+        reaper_thread = sniffer._reaper_thread
+
+        sniffer.stop()
+
+        assert capture.stop_calls == 1
+        assert sniffer.running is False
+        assert not reaper_thread.is_alive()
+
+    def test_stop_is_idempotent(self, fake_sniffer):
+        sniffer = RTPSSniffer(interface="lo")
+        sniffer.start()
+        capture = fake_sniffer.instances[0]
+
+        sniffer.stop()
+        sniffer.stop()
+
+        assert capture.stop_calls == 1
+
+    def test_failed_start_resets_running_state(self, fake_sniffer):
+        fake_sniffer.fail_on_start = True
+        sniffer = RTPSSniffer(interface="lo")
+
+        with pytest.raises(PermissionError):
+            sniffer.start()
+
+        assert sniffer.running is False
+        assert sniffer._sniffer is None
+        assert sniffer._reaper_thread is None
+
+    def test_restart_clears_stop_event_and_starts_new_reaper(self, fake_sniffer):
+        sniffer = RTPSSniffer(interface="lo")
+
+        sniffer.start()
+        first_reaper = sniffer._reaper_thread
+        sniffer.stop()
+
+        sniffer.start()
+        second_reaper = sniffer._reaper_thread
+
+        assert len(fake_sniffer.instances) == 2
+        assert sniffer.running is True
+        assert second_reaper is not first_reaper
+        assert second_reaper.is_alive()
+
+        sniffer.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -243,13 +351,16 @@ class TestLeaseReaper:
             "guid": "ep-1", "guid_prefix": stale_guid, "topic": "/scan", "type": "t", "qos": {}, "last_seen": time.time(),
         }
 
-        # Run exactly one reaper iteration: fake time.sleep so it doesn't
-        # actually block, and flip `running` off after the first call so the
-        # while-loop exits after processing once.
-        def fake_sleep(_seconds):
-            sniffer.running = False
+        # Run exactly one reaper iteration: let the first wait continue and
+        # make the next wait stop the loop.
+        wait_calls = 0
 
-        monkeypatch.setattr(rtps_sniffer.time, "sleep", fake_sleep)
+        def fake_wait(_seconds):
+            nonlocal wait_calls
+            wait_calls += 1
+            return wait_calls > 1
+
+        monkeypatch.setattr(sniffer._stop_event, "wait", fake_wait)
         sniffer._lease_reaper_loop()
 
         assert stale_guid not in sniffer.discovered_participants
@@ -269,10 +380,7 @@ class TestLeaseReaper:
             "lease_duration": 20.0,
         }
 
-        def fake_sleep(_seconds):
-            sniffer.running = False
-
-        monkeypatch.setattr(rtps_sniffer.time, "sleep", fake_sleep)
+        monkeypatch.setattr(sniffer._stop_event, "wait", lambda _seconds: True)
         sniffer._lease_reaper_loop()
 
         assert fresh_guid in sniffer.discovered_participants
@@ -307,7 +415,14 @@ class TestLeaseReaper:
         )
 
         monkeypatch.setattr(rtps_sniffer.time, "time", lambda: 2.0)
-        monkeypatch.setattr(rtps_sniffer.time, "sleep", lambda _seconds: setattr(sniffer, "running", False))
+        wait_calls = 0
+
+        def fake_wait(_seconds):
+            nonlocal wait_calls
+            wait_calls += 1
+            return wait_calls > 1
+
+        monkeypatch.setattr(sniffer._stop_event, "wait", fake_wait)
         sniffer._lease_reaper_loop()
 
         assert not builder.graph.has_node(f"participant:{prefix}")
