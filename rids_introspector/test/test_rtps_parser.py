@@ -134,6 +134,21 @@ class TestMalformedInput:
         events = RTPSParser.parse_packet(payload)
         assert events == []
 
+    def test_truncated_submessage_does_not_skip_past_packet(self):
+        guid_prefix = b"\x01\x0f\x39\x63\x48\x65\x43\x07\x00\x00\x00\x00"
+        header = b"RTPS" + b"\x02\x03" + b"\x01\x0f" + guid_prefix
+
+        # The first submessage is safely ignored because it is unsupported.
+        valid_submessage = bytes([0x80, 0x01]) + b"\x00\x00"
+        # The second header declares 16 bytes but only 2 are available.
+        truncated_submessage = bytes([0x80, 0x01]) + b"\x10\x00" + b"\xaa\xbb"
+
+        events = RTPSParser.parse_packet(
+            header + valid_submessage + truncated_submessage
+        )
+
+        assert events == []
+
 
 # ---------------------------------------------------------------------------
 # Classification by writer entity ID

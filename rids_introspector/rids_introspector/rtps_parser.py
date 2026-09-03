@@ -128,9 +128,20 @@ class RTPSParser:
             little_endian = bool(flags & 0x01)
             endian_str = "<" if little_endian else ">"
 
-            submsg_len = struct.unpack(f"{endian_str}H", payload[offset + 2 : offset + 4])[0]
-            if submsg_len == 0 and offset + 4 < len(payload):
-                submsg_len = len(payload) - (offset + 4)
+            submsg_len = struct.unpack(
+                f"{endian_str}H",
+                payload[offset + 2 : offset + 4],
+            )[0]
+
+            remaining = len(payload) - (offset + 4)
+
+            if submsg_len > remaining:
+                if debug and logger:
+                    logger.debug(
+                        f"Truncated submessage at offset {offset}: "
+                        f"declared={submsg_len}, available={remaining}"
+                    )
+                break
 
             submsg_payload = payload[offset + 4 : offset + 4 + submsg_len]
             submsg_name = SUBMSG_NAME_MAP.get(submsg_id, f"CUSTOM(0x{submsg_id:02x})")
