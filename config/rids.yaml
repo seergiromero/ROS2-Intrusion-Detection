@@ -1,0 +1,26 @@
+introspector:
+  interface: lo
+  port_filter: "udp portrange 7400-7600"
+  interval: 1.0
+  gui: false
+  no_terminal: false
+  table_width: 180
+  debug: false
+
+detector:
+  mode: live
+  poll_interval: 0.5
+  console: true
+
+paths:
+  results_dir: results
+  snapshots: results/phase1/snapshots.jsonl
+  alerts: results/phase2/alerts.jsonl
+
+security:
+  baseline: config/baseline.yaml
+  critical_topics:
+    - /cmd_vel
+    - /scan
+    - /goal_pose
+    - /tf
