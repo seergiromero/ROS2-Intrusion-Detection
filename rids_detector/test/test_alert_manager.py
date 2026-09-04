@@ -23,26 +23,30 @@ SOFTWARE.
 """
 
 import json
-from unittest.mock import MagicMock
+import logging
 import pytest
-from rids_detector.alert_manager import AlertManager
+
+from rids_detector.alert_manager import AlertManager, logger as alert_logger
+from rids_detector.models import Alert
 
 
 @pytest.fixture
-def mock_alert():
-    """Creates a mock Alert object with standard attributes and to_dict method."""
-    alert = MagicMock()
-    alert.severity = "WARNING"
-    alert.rule = "check_new_participants"
-    alert.message = "New participant detected"
-    alert.timestamp = "2026-09-04T10:00:00"
-    alert.to_dict.return_value = {
-        "severity": "WARNING",
-        "rule": "check_new_participants",
-        "message": "New participant detected",
-        "timestamp": "2026-09-04T10:00:00",
-    }
-    return alert
+def sample_alert() -> Alert:
+    """Provides a realistic Alert instance with epoch timestamp and context."""
+    return Alert(
+        severity="WARNING",
+        rule="check_new_participants",
+        message="New participant detected",
+        timestamp=1788516000.0,  # 2026-09-04T10:00:00Z
+        participant="participant_A",
+        endpoint="guid_123",
+        topic="/chatter",
+    )
+
+
+# ------------------------------------------------------------------
+# Tests: Lifecycle & File Management
+# ------------------------------------------------------------------
 
 
 def test_init_creates_directories_and_opens_file(tmp_path):
@@ -59,66 +63,15 @@ def test_init_creates_directories_and_opens_file(tmp_path):
     assert manager._file.closed
 
 
-def test_emit_writes_jsonl_record(tmp_path, mock_alert):
-    """Verifies that emit writes the formatted JSON record to the file."""
+def test_context_manager_usage(tmp_path, sample_alert: Alert):
+    """Verifies that AlertManager can be used safely as a context manager."""
     output_file = tmp_path / "alerts.jsonl"
-    manager = AlertManager(output_path=output_file, console_output=False)
 
-    record = manager.emit(mock_alert)
-    manager.close()
+    with AlertManager(output_path=output_file, console_output=False) as manager:
+        manager.emit(sample_alert)
+        assert not manager._file.closed
 
-    # Check returned dictionary
-    assert record == mock_alert.to_dict.return_value
-
-    # Check file content
-    content = output_file.read_text(encoding="utf-8").strip()
-    written_data = json.loads(content)
-
-    assert written_data["severity"] == "WARNING"
-    assert written_data["rule"] == "check_new_participants"
-    assert written_data["message"] == "New participant detected"
-
-
-def test_emit_console_output_enabled(tmp_path, mock_alert, capsys):
-    """Verifies that output is printed to the terminal when console_output=True."""
-    output_file = tmp_path / "alerts.jsonl"
-    manager = AlertManager(output_path=output_file, console_output=True)
-
-    manager.emit(mock_alert)
-    manager.close()
-
-    captured = capsys.readouterr()
-    expected_msg = "[WARNING] 2026-09-04T10:00:00 - Rule: check_new_participants - Msg: New participant detected\n"
-    assert captured.out == expected_msg
-
-
-def test_emit_console_output_disabled(tmp_path, mock_alert, capsys):
-    """Verifies that nothing is printed to the terminal when console_output=False."""
-    output_file = tmp_path / "alerts.jsonl"
-    manager = AlertManager(output_path=output_file, console_output=False)
-
-    manager.emit(mock_alert)
-    manager.close()
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-
-
-def test_format_console_without_timestamp(tmp_path):
-    """Verifies console formatting when alert timestamp is missing or None."""
-    output_file = tmp_path / "alerts.jsonl"
-    manager = AlertManager(output_path=output_file)
-
-    alert_no_time = MagicMock()
-    alert_no_time.severity = "CRITICAL"
-    alert_no_time.rule = "critical_rule"
-    alert_no_time.message = "Critical alert fired"
-    alert_no_time.timestamp = None
-
-    formatted = manager._format_console(alert_no_time)
-    manager.close()
-
-    assert formatted == "[CRITICAL] Rule: critical_rule - Msg: Critical alert fired"
+    assert manager._file.closed
 
 
 def test_close_handles_multiple_calls_safely(tmp_path):
@@ -131,3 +84,112 @@ def test_close_handles_multiple_calls_safely(tmp_path):
 
     # Second call should be safe
     manager.close()
+
+
+def test_emit_after_close_raises_runtime_error(tmp_path, sample_alert: Alert):
+    """Verifies that emitting an alert after closing the manager raises RuntimeError."""
+    output_file = tmp_path / "alerts.jsonl"
+    manager = AlertManager(output_path=output_file)
+    manager.close()
+
+    with pytest.raises(RuntimeError, match="AlertManager is closed"):
+        manager.emit(sample_alert)
+
+
+# ------------------------------------------------------------------
+# Tests: Emission & JSONL Output
+# ------------------------------------------------------------------
+
+
+def test_emit_writes_jsonl_record(tmp_path, sample_alert: Alert):
+    """Verifies that emit writes the formatted JSON record to the file."""
+    output_file = tmp_path / "alerts.jsonl"
+
+    with AlertManager(output_path=output_file, console_output=False) as manager:
+        record = manager.emit(sample_alert)
+
+    # Check returned dictionary
+    assert record == sample_alert.to_dict()
+
+    # Check file content
+    content = output_file.read_text(encoding="utf-8").strip()
+    written_data = json.loads(content)
+
+    assert written_data["severity"] == "WARNING"
+    assert written_data["rule"] == "check_new_participants"
+    assert written_data["message"] == "New participant detected"
+    assert written_data["participant"] == "participant_A"
+
+
+# ------------------------------------------------------------------
+# Tests: Logging & Console Formatting
+# ------------------------------------------------------------------
+
+
+def test_emit_logging_output_enabled(tmp_path, sample_alert: Alert, caplog):
+    """Verifies that output is captured via logger when console_output=True."""
+    alert_logger.propagate = True
+    caplog.set_level(logging.WARNING, logger=alert_logger.name)
+
+    output_file = tmp_path / "alerts.jsonl"
+
+    with AlertManager(output_path=output_file, console_output=True) as manager:
+        manager.emit(sample_alert)
+
+    assert "check_new_participants" in caplog.text
+    assert "New participant detected" in caplog.text
+    assert "[Topic: /chatter | Participant: participant_A | Endpoint: guid_123]" in caplog.text
+
+
+def test_emit_logging_output_disabled(tmp_path, sample_alert: Alert, caplog):
+    """Verifies that nothing is logged when console_output=False."""
+    alert_logger.propagate = True
+    caplog.set_level(logging.INFO, logger=alert_logger.name)
+
+    output_file = tmp_path / "alerts.jsonl"
+
+    with AlertManager(output_path=output_file, console_output=False) as manager:
+        manager.emit(sample_alert)
+
+    assert caplog.text == ""
+
+
+def test_format_console_with_context_and_formatted_timestamp(tmp_path):
+    """Verifies console string formatting with timestamp conversion and metadata context."""
+    output_file = tmp_path / "alerts.jsonl"
+    alert = Alert(
+        severity="CRITICAL",
+        rule="check_unauthorized_critical_publishers",
+        message="Critical publisher detected",
+        timestamp=1788516000.0,
+        topic="/cmd_vel",
+        participant="bad_actor",
+        endpoint="bad_actor.01",
+    )
+
+    with AlertManager(output_path=output_file) as manager:
+        formatted = manager._format_console(alert)
+
+    expected = (
+        "[CRITICAL] 2026-09-04T10:00:00Z - "
+        "Rule: check_unauthorized_critical_publishers - "
+        "Msg: Critical publisher detected "
+        "[Topic: /cmd_vel | Participant: bad_actor | Endpoint: bad_actor.01]"
+    )
+    assert formatted == expected
+
+
+def test_format_console_without_timestamp_or_context(tmp_path):
+    """Verifies console string formatting when optional context and timestamp are missing."""
+    output_file = tmp_path / "alerts.jsonl"
+    alert = Alert(
+        severity="WARNING",
+        rule="check_new_participants",
+        message="Simple alert",
+        timestamp=None,
+    )
+
+    with AlertManager(output_path=output_file) as manager:
+        formatted = manager._format_console(alert)
+
+    assert formatted == "[WARNING] Rule: check_new_participants - Msg: Simple alert"
