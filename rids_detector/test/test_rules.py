@@ -22,150 +22,131 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from unittest.mock import MagicMock
 import pytest
 
+from rids_detector.compare import (
+    ComparisonResult,
+    ObservedEndpoint,
+    QoSChange,
+    RoleChange,
+    TypeChange,
+)
+from rids_detector.models import Alert, Baseline, BaselineEndpoint
 from rids_detector.rules import (
     check_new_endpoints,
     check_new_participants,
     check_qos_changes,
-    check_type_or_role_changes,
+    check_role_changes,
+    check_type_changes,
     check_unauthorized_critical_publishers,
     evaluate_all_rules,
 )
 
 
 @pytest.fixture
-def baseline():
-    mock_b = MagicMock()
-    mock_b.critical_topics = {"/critical/topic_a"}
-    return mock_b
-
-
-@pytest.fixture
-def snapshot():
-    return {}
-
-
-@pytest.fixture
-def alert_factory(monkeypatch):
-    """Mocks Alert.now to return simple dicts or mock objects for easier assertion."""
-
-    def mock_now(
-        severity,
-        rule,
-        message,
-        participant=None,
-        endpoint=None,
-        topic=None,
-        role=None,
-        observed_qos=None,
-        expected_qos=None,
-    ):
-        alert = MagicMock()
-        alert.severity = severity
-        alert.rule = rule
-        alert.message = message
-        alert.participant = participant
-        alert.endpoint = endpoint
-        alert.topic = topic
-        alert.role = role
-        alert.observed_qos = observed_qos
-        alert.expected_qos = expected_qos
-        return alert
-
-    monkeypatch.setattr("rids_detector.rules.Alert.now", mock_now)
-
-
-# ------------------------------------------------------------------
-# Tests: check_new_participants
-# ------------------------------------------------------------------
-
-
-def test_check_new_participants_sorted(baseline, snapshot, alert_factory):
-    comparison = MagicMock()
-    comparison.new_participants = ["participant_B", "participant_A"]
-
-    alerts = check_new_participants(baseline, snapshot, comparison)
-
-    assert len(alerts) == 2
-    assert alerts[0].participant == "participant_A"
-    assert alerts[1].participant == "participant_B"
-    assert all(a.severity == "WARNING" for a in alerts)
-
-
-# ------------------------------------------------------------------
-# Tests: check_new_endpoints & check_unauthorized_critical_publishers
-# ------------------------------------------------------------------
-
-
-def test_check_new_endpoints_ignores_critical_publishers(
-    baseline, snapshot, alert_factory
-):
-    comparison = MagicMock()
-    comparison.new_endpoints = [
-        # Critical publisher: MUST be skipped by check_new_endpoints
-        {
-            "guid": "guid_1",
-            "topic": "/critical/topic_a",
-            "role": "publisher",
-            "participant": "p1",
-        },
-        # Critical subscriber: MUST be processed by check_new_endpoints
-        {
-            "guid": "guid_2",
-            "topic": "/critical/topic_a",
-            "role": "subscriber",
-            "participant": "p2",
-        },
-        # Normal publisher: MUST be processed by check_new_endpoints
-        {
-            "guid": "guid_3",
-            "topic": "/normal/topic_b",
-            "role": "publisher",
-            "participant": "p3",
-        },
-    ]
-
-    alerts = check_new_endpoints(baseline, snapshot, comparison)
-
-    assert len(alerts) == 2
-    assert {a.endpoint for a in alerts} == {"guid_2", "guid_3"}
-    assert all(a.severity == "WARNING" for a in alerts)
-
-
-def test_check_unauthorized_critical_publishers_detects_only_critical_publishers(
-    baseline, snapshot, alert_factory
-):
-    comparison = MagicMock()
-    comparison.new_endpoints = [
-        {
-            "guid": "guid_1",
-            "topic": "/critical/topic_a",
-            "role": "publisher",
-            "participant": "p1",
-        },
-        {
-            "guid": "guid_2",
-            "topic": "/critical/topic_a",
-            "role": "subscriber",
-            "participant": "p2",
-        },
-        {
-            "guid": "guid_3",
-            "topic": "/normal/topic_b",
-            "role": "publisher",
-            "participant": "p3",
-        },
-    ]
-
-    alerts = check_unauthorized_critical_publishers(
-        baseline, snapshot, comparison
+def sample_baseline() -> Baseline:
+    """Provides a realistic Baseline instance with critical topics."""
+    return Baseline(
+        version=1,
+        created_at="2026-09-03T00:00:00Z",
+        source="test",
+        participants=["p_legit"],
+        endpoints=[
+            BaselineEndpoint(
+                guid="p_legit.01",
+                participant="p_legit",
+                topic="/critical/topic_a",
+                role="publisher",
+                type_name="std_msgs/msg/String",
+                qos={"reliability": "reliable", "durability": "transient"},
+            )
+        ],
+        critical_topics=["/critical/topic_a"],
     )
 
-    assert len(alerts) == 1
-    assert alerts[0].endpoint == "guid_1"
-    assert alerts[0].severity == "CRITICAL"
+
+# ------------------------------------------------------------------
+# Tests: check_unauthorized_critical_publishers & Participant Deduplication
+# ------------------------------------------------------------------
+
+
+def test_unauthorized_critical_publisher_suppresses_new_participant_warning(
+    sample_baseline: Baseline,
+):
+    """Tests that a new critical publisher triggers a CRITICAL alert and suppresses WARNING on participant."""
+    new_ep = ObservedEndpoint(
+        guid="attacker.01",
+        participant="attacker_node",
+        topic="/critical/topic_a",
+        role="publisher",
+        type_name="std_msgs/msg/String",
+        qos={"reliability": "reliable"},
+    )
+    comparison = ComparisonResult(
+        new_participants=["attacker_node", "innocent_node"],
+        new_endpoints=[new_ep],
+    )
+
+    # 1. Critical publisher check
+    crit_alerts = check_unauthorized_critical_publishers(
+        sample_baseline, {}, comparison
+    )
+    assert len(crit_alerts) == 1
+    assert crit_alerts[0].severity == "CRITICAL"
+    assert crit_alerts[0].participant == "attacker_node"
+    assert crit_alerts[0].topic == "/critical/topic_a"
+
+    # 2. New participant check (should suppress attacker_node and only alert innocent_node)
+    part_alerts = check_new_participants(sample_baseline, {}, comparison)
+    assert len(part_alerts) == 1
+    assert part_alerts[0].severity == "WARNING"
+    assert part_alerts[0].participant == "innocent_node"
+
+
+# ------------------------------------------------------------------
+# Tests: check_new_endpoints
+# ------------------------------------------------------------------
+
+
+def test_check_new_endpoints_critical_subscriber_and_normal_publisher(
+    sample_baseline: Baseline,
+):
+    """Tests that new critical subscribers and normal publishers yield WARNING alerts."""
+    ep_sub_crit = ObservedEndpoint(
+        guid="sub.01",
+        participant="reader_node",
+        topic="/critical/topic_a",
+        role="subscriber",
+        type_name="std_msgs/msg/String",
+        qos={},
+    )
+    ep_pub_norm = ObservedEndpoint(
+        guid="pub.01",
+        participant="writer_node",
+        topic="/normal/topic_b",
+        role="publisher",
+        type_name="std_msgs/msg/Int32",
+        qos={},
+    )
+    ep_pub_crit = ObservedEndpoint(
+        guid="pub.99",
+        participant="rogue_node",
+        topic="/critical/topic_a",
+        role="publisher",
+        type_name="std_msgs/msg/String",
+        qos={},
+    )
+
+    comparison = ComparisonResult(
+        new_endpoints=[ep_sub_crit, ep_pub_norm, ep_pub_crit]
+    )
+
+    alerts = check_new_endpoints(sample_baseline, {}, comparison)
+
+    # ep_pub_crit is handled by check_unauthorized_critical_publishers, so 2 remain
+    assert len(alerts) == 2
+    assert {a.endpoint for a in alerts} == {"sub.01", "pub.01"}
+    assert all(a.severity == "WARNING" for a in alerts)
 
 
 # ------------------------------------------------------------------
@@ -173,100 +154,140 @@ def test_check_unauthorized_critical_publishers_detects_only_critical_publishers
 # ------------------------------------------------------------------
 
 
-def test_check_qos_changes_diff_keys_and_severity(
-    baseline, snapshot, alert_factory
+def test_check_qos_changes_multiple_fields_and_critical_severity(
+    sample_baseline: Baseline,
 ):
-    qos_crit = MagicMock()
-    qos_crit.topic = "/critical/topic_a"
-    qos_crit.guid = "guid_crit"
-    qos_crit.participant = "p1"
-    qos_crit.expected_qos = {
-        "reliability": "RELIABLE",
-        "durability": "TRANSIENT",
-    }
-    qos_crit.observed_qos = {
-        "reliability": "BEST_EFFORT",
-        "durability": "TRANSIENT",
-    }
+    """Tests QoS changes with multiple altered attributes and correct severity scaling."""
+    qos_crit = QoSChange(
+        guid="p_legit.01",
+        topic="/critical/topic_a",
+        participant="p_legit",
+        expected_qos={"reliability": "reliable", "durability": "transient"},
+        observed_qos={"reliability": "best_effort", "durability": "volatile"},
+    )
+    qos_norm = QoSChange(
+        guid="p_other.01",
+        topic="/normal/topic_b",
+        participant="p_other",
+        expected_qos={"reliability": "reliable"},
+        observed_qos={"reliability": "best_effort"},
+    )
 
-    qos_norm = MagicMock()
-    qos_norm.topic = "/normal/topic_b"
-    qos_norm.guid = "guid_norm"
-    qos_norm.participant = "p2"
-    # Fallback to non-target key diff
-    qos_norm.expected_qos = {"custom_key": "val1"}
-    qos_norm.observed_qos = {"custom_key": "val2"}
-
-    comparison = MagicMock()
-    comparison.qos_changes = [qos_crit, qos_norm]
-
-    alerts = check_qos_changes(baseline, snapshot, comparison)
+    comparison = ComparisonResult(qos_changes=[qos_crit, qos_norm])
+    alerts = check_qos_changes(sample_baseline, {}, comparison)
 
     assert len(alerts) == 2
+
+    # Critical topic QoS mismatch
     assert alerts[0].severity == "CRITICAL"
     assert "reliability" in alerts[0].message
+    assert "durability" in alerts[0].message
 
+    # Non-critical topic QoS mismatch
     assert alerts[1].severity == "WARNING"
-    assert "custom_key" in alerts[1].message
+    assert "reliability" in alerts[1].message
 
 
 # ------------------------------------------------------------------
-# Tests: check_type_or_role_changes
+# Tests: Role and Type Changes
 # ------------------------------------------------------------------
 
 
-def test_check_type_or_role_changes(baseline, snapshot, alert_factory):
-    rc = MagicMock()
-    rc.topic = "/critical/topic_a"
-    rc.guid = "guid_role"
-    rc.participant = "p1"
-    rc.expected_role = "subscriber"
-    rc.observed_role = "publisher"
+def test_check_role_changes(sample_baseline: Baseline):
+    """Tests detection of role changes on critical vs normal topics."""
+    rc_crit = RoleChange(
+        guid="p_legit.01",
+        topic="/critical/topic_a",
+        participant="p_legit",
+        expected_role="publisher",
+        observed_role="subscriber",
+    )
+    comparison = ComparisonResult(role_changes=[rc_crit])
 
-    tc = MagicMock()
-    tc.topic = "/normal/topic_b"
-    tc.guid = "guid_type"
-    tc.participant = "p2"
-    tc.expected_type = "std_msgs::String"
-    tc.observed_type = "std_msgs::Int32"
+    alerts = check_role_changes(sample_baseline, {}, comparison)
 
-    comparison = MagicMock()
-    comparison.role_changes = [rc]
-    comparison.type_changes = [tc]
+    assert len(alerts) == 1
+    assert alerts[0].severity == "CRITICAL"
+    assert alerts[0].rule == "check_role_changes"
+    assert alerts[0].role == "subscriber"
 
-    alerts = check_type_or_role_changes(baseline, snapshot, comparison)
+
+def test_check_type_changes_critical_and_normal(sample_baseline: Baseline):
+    """Tests message type change detection with CRITICAL severity on critical topics."""
+    tc_crit = TypeChange(
+        guid="p_legit.01",
+        topic="/critical/topic_a",
+        participant="p_legit",
+        expected_type="std_msgs/msg/String",
+        observed_type="std_msgs/msg/Int32",
+    )
+    tc_norm = TypeChange(
+        guid="p_other.01",
+        topic="/normal/topic_b",
+        participant="p_other",
+        expected_type="sensor_msgs/msg/Image",
+        observed_type="sensor_msgs/msg/CompressedImage",
+    )
+    comparison = ComparisonResult(type_changes=[tc_crit, tc_norm])
+
+    alerts = check_type_changes(sample_baseline, {}, comparison)
 
     assert len(alerts) == 2
     assert alerts[0].severity == "CRITICAL"
-    assert alerts[0].rule == "check_type_or_role_changes"
+    assert alerts[0].rule == "check_type_changes"
     assert alerts[1].severity == "WARNING"
 
 
 # ------------------------------------------------------------------
-# Tests: evaluate_all_rules
+# Integration Test: evaluate_all_rules with Real Objects
 # ------------------------------------------------------------------
 
 
-def test_evaluate_all_rules_runs_complete_suite(
-    baseline, snapshot, alert_factory
-):
-    comparison = MagicMock()
-    comparison.new_participants = ["part_1"]
-    comparison.new_endpoints = [
-        {
-            "guid": "g1",
-            "topic": "/critical/topic_a",
-            "role": "publisher",
-            "participant": "part_1",
-        }
-    ]
-    comparison.qos_changes = []
-    comparison.role_changes = []
-    comparison.type_changes = []
+def test_evaluate_all_rules_with_real_domain_objects(sample_baseline: Baseline):
+    """Integrates all rule evaluations using real Baseline, ComparisonResult, and Alert instances."""
+    new_crit_pub = ObservedEndpoint(
+        guid="bad_actor.01",
+        participant="bad_actor",
+        topic="/critical/topic_a",
+        role="publisher",
+        type_name="std_msgs/msg/String",
+        qos={"reliability": "reliable"},
+    )
+    new_norm_sub = ObservedEndpoint(
+        guid="listener.01",
+        participant="listener_node",
+        topic="/normal/topic_b",
+        role="subscriber",
+        type_name="std_msgs/msg/Int32",
+        qos={},
+    )
+    type_mod = TypeChange(
+        guid="p_legit.01",
+        topic="/critical/topic_a",
+        participant="p_legit",
+        expected_type="std_msgs/msg/String",
+        observed_type="std_msgs/msg/Byte",
+    )
 
-    alerts = evaluate_all_rules(baseline, snapshot, comparison)
+    comparison = ComparisonResult(
+        new_participants=["bad_actor", "listener_node"],
+        new_endpoints=[new_crit_pub, new_norm_sub],
+        type_changes=[type_mod],
+    )
 
-    # Must contain 1 critical alert (critical publisher) + 1 warning alert (new participant)
-    assert len(alerts) == 2
-    severities = {a.severity for a in alerts}
-    assert severities == {"CRITICAL", "WARNING"}
+    alerts = evaluate_all_rules(sample_baseline, {}, comparison)
+
+    assert len(alerts) == 4
+    assert all(isinstance(a, Alert) for a in alerts)
+
+    severities = [a.severity for a in alerts]
+    assert severities.count("CRITICAL") == 2
+    assert severities.count("WARNING") == 2
+
+    rules_triggered = {a.rule for a in alerts}
+    assert rules_triggered == {
+        "check_unauthorized_critical_publishers",
+        "check_new_participants",
+        "check_new_endpoints",
+        "check_type_changes",
+    }

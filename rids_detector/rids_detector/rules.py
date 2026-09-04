@@ -22,11 +22,52 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .compare import ComparisonResult
 from .models import Alert, Baseline
+
+
+def _get_attr(obj: Any, attr_name: str, default: Any = None) -> Any:
+    """Helper to safely access attributes from both objects and dictionaries."""
+    if isinstance(obj, dict):
+        return obj.get(attr_name, default)
+    return getattr(obj, attr_name, default)
+
+
+def check_unauthorized_critical_publishers(
+    baseline: Baseline,
+    snapshot: dict[str, Any],
+    comparison: ComparisonResult,
+    critical_topics: Iterable[str] | None = None,
+) -> list[Alert]:
+    """Detect the appearance of an unauthorized publisher on a critical topic."""
+    critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
+    alerts: list[Alert] = []
+
+    for ep in comparison.new_endpoints:
+        topic = _get_attr(ep, "topic")
+        role = _get_attr(ep, "role")
+
+        if role == "publisher" and topic in critical_set:
+            participant = _get_attr(ep, "participant") or _get_attr(ep, "guid_prefix")
+            guid = _get_attr(ep, "guid")
+            qos = _get_attr(ep, "qos", {})
+
+            alerts.append(
+                Alert.now(
+                    severity="CRITICAL",
+                    rule="check_unauthorized_critical_publishers",
+                    message=f"CRITICAL: Unauthorized publisher on critical topic '{topic}' (GUID: '{guid}')",
+                    participant=participant,
+                    endpoint=guid,
+                    topic=topic,
+                    role="publisher",
+                    observed_qos=qos if isinstance(qos, dict) else {},
+                )
+            )
+    return alerts
 
 
 def check_new_participants(
@@ -35,10 +76,27 @@ def check_new_participants(
     comparison: ComparisonResult,
     critical_topics: Iterable[str] | None = None,
 ) -> list[Alert]:
-    """Detect participants not registered in the baseline."""
+    """Detect participants not registered in the baseline.
+    
+    Suppresses WARNING alerts for new participants if they already triggered a CRITICAL
+    alert via check_unauthorized_critical_publishers.
+    """
+    critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
     alerts: list[Alert] = []
 
+    # Identify participants associated with critical publisher violations
+    critical_participants: set[str] = set()
+    for ep in comparison.new_endpoints:
+        topic = _get_attr(ep, "topic")
+        role = _get_attr(ep, "role")
+        participant = _get_attr(ep, "participant") or _get_attr(ep, "guid_prefix")
+        if role == "publisher" and topic in critical_set and participant:
+            critical_participants.add(str(participant))
+
     for participant in sorted(comparison.new_participants):
+        if participant in critical_participants:
+            continue
+
         alerts.append(
             Alert.now(
                 severity="WARNING",
@@ -61,17 +119,17 @@ def check_new_endpoints(
     alerts: list[Alert] = []
 
     for ep in comparison.new_endpoints:
-        topic = ep.get("topic")
-        role = ep.get("role")
+        topic = _get_attr(ep, "topic")
+        role = _get_attr(ep, "role")
 
         # Avoid duplicating alerts for unauthorized publishers on critical topics
         if role == "publisher" and topic in critical_set:
             continue
 
-        participant = ep.get("participant") or ep.get("guid_prefix")
-        guid = ep.get("guid")
-        type_name = ep.get("type_name") or ep.get("type")
-        qos = ep.get("qos", {})
+        participant = _get_attr(ep, "participant") or _get_attr(ep, "guid_prefix")
+        guid = _get_attr(ep, "guid")
+        type_name = _get_attr(ep, "type_name") or _get_attr(ep, "type")
+        qos = _get_attr(ep, "qos", {})
 
         alerts.append(
             Alert.now(
@@ -82,43 +140,9 @@ def check_new_endpoints(
                 endpoint=guid,
                 topic=topic,
                 role=role if role in ("publisher", "subscriber") else None,
-                observed_qos=qos,
+                observed_qos=qos if isinstance(qos, dict) else {},
             )
         )
-    return alerts
-
-
-def check_unauthorized_critical_publishers(
-    baseline: Baseline,
-    snapshot: dict[str, Any],
-    comparison: ComparisonResult,
-    critical_topics: Iterable[str] | None = None,
-) -> list[Alert]:
-    """Detect the appearance of an unauthorized publisher on a critical topic."""
-    critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
-    alerts: list[Alert] = []
-
-    for ep in comparison.new_endpoints:
-        topic = ep.get("topic")
-        role = ep.get("role")
-
-        if role == "publisher" and topic in critical_set:
-            participant = ep.get("participant") or ep.get("guid_prefix")
-            guid = ep.get("guid")
-            qos = ep.get("qos", {})
-
-            alerts.append(
-                Alert.now(
-                    severity="CRITICAL",
-                    rule="check_unauthorized_critical_publishers",
-                    message=f"CRITICAL: Unauthorized publisher on critical topic '{topic}' (GUID: '{guid}')",
-                    participant=participant,
-                    endpoint=guid,
-                    topic=topic,
-                    role="publisher",
-                    observed_qos=qos,
-                )
-            )
     return alerts
 
 
@@ -133,80 +157,121 @@ def check_qos_changes(
     alerts: list[Alert] = []
 
     for qos_change in comparison.qos_changes:
-        topic = qos_change.topic
+        topic = _get_attr(qos_change, "topic")
         severity = "CRITICAL" if topic in critical_set else "WARNING"
+        expected_qos = _get_attr(qos_change, "expected_qos", {})
+        observed_qos = _get_attr(qos_change, "observed_qos", {})
+        guid = _get_attr(qos_change, "guid")
+        participant = _get_attr(qos_change, "participant")
 
         # Identify modified attributes
         target_keys = ("reliability", "durability", "history", "depth")
         diff_keys = [
             key for key in target_keys
-            if key in qos_change.expected_qos
-            and qos_change.observed_qos.get(key) != qos_change.expected_qos.get(key)
+            if key in expected_qos and observed_qos.get(key) != expected_qos.get(key)
         ]
         if not diff_keys:
             diff_keys = [
-                k for k in qos_change.expected_qos
-                if qos_change.observed_qos.get(k) != qos_change.expected_qos.get(k)
+                k for k in expected_qos if observed_qos.get(k) != expected_qos.get(k)
             ]
 
         properties_str = ", ".join(diff_keys) if diff_keys else "qos properties"
-        msg = f"QoS mismatch on endpoint '{qos_change.guid}' for topic '{topic}'. Modified properties: [{properties_str}]"
+        msg = f"QoS mismatch on endpoint '{guid}' for topic '{topic}'. Modified properties: [{properties_str}]"
 
         alerts.append(
             Alert.now(
                 severity=severity,
                 rule="check_qos_changes",
                 message=msg,
-                participant=qos_change.participant,
-                endpoint=qos_change.guid,
+                participant=participant,
+                endpoint=guid,
                 topic=topic,
-                observed_qos=qos_change.observed_qos,
-                expected_qos=qos_change.expected_qos,
+                observed_qos=observed_qos if isinstance(observed_qos, dict) else {},
+                expected_qos=expected_qos if isinstance(expected_qos, dict) else {},
             )
         )
     return alerts
 
 
-def check_type_or_role_changes(
+def check_role_changes(
     baseline: Baseline,
     snapshot: dict[str, Any],
     comparison: ComparisonResult,
     critical_topics: Iterable[str] | None = None,
 ) -> list[Alert]:
-    """Detect role or message type changes on existing GUIDs."""
+    """Detect role changes on existing GUIDs."""
     critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
     alerts: list[Alert] = []
 
     for rc in comparison.role_changes:
-        severity = "CRITICAL" if rc.topic in critical_set else "WARNING"
-        msg = f"Role change on '{rc.guid}' ({rc.topic}): expected '{rc.expected_role}', observed '{rc.observed_role}'"
+        topic = _get_attr(rc, "topic")
+        severity = "CRITICAL" if topic in critical_set else "WARNING"
+        expected_role = _get_attr(rc, "expected_role")
+        observed_role = _get_attr(rc, "observed_role")
+        guid = _get_attr(rc, "guid")
+        participant = _get_attr(rc, "participant")
+
+        msg = f"Role change on '{guid}' ({topic}): expected '{expected_role}', observed '{observed_role}'"
         alerts.append(
             Alert.now(
                 severity=severity,
-                rule="check_type_or_role_changes",
+                rule="check_role_changes",
                 message=msg,
-                participant=rc.participant,
-                endpoint=rc.guid,
-                topic=rc.topic,
-                role=rc.observed_role if rc.observed_role in ("publisher", "subscriber") else None,
+                participant=participant,
+                endpoint=guid,
+                topic=topic,
+                role=observed_role if observed_role in ("publisher", "subscriber") else None,
             )
         )
+    return alerts
+
+
+def check_type_changes(
+    baseline: Baseline,
+    snapshot: dict[str, Any],
+    comparison: ComparisonResult,
+    critical_topics: Iterable[str] | None = None,
+) -> list[Alert]:
+    """Detect message type changes on existing GUIDs."""
+    critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
+    alerts: list[Alert] = []
 
     for tc in comparison.type_changes:
-        severity = "CRITICAL" if tc.topic in critical_set else "WARNING"
-        msg = f"Type change on '{tc.guid}' ({tc.topic}): expected '{tc.expected_type}', observed '{tc.observed_type}'"
+        topic = _get_attr(tc, "topic")
+        severity = "CRITICAL" if topic in critical_set else "WARNING"
+        expected_type = _get_attr(tc, "expected_type")
+        observed_type = _get_attr(tc, "observed_type")
+        guid = _get_attr(tc, "guid")
+        participant = _get_attr(tc, "participant")
+
+        msg = f"Type change on '{guid}' ({topic}): expected '{expected_type}', observed '{observed_type}'"
         alerts.append(
             Alert.now(
                 severity=severity,
-                rule="check_type_or_role_changes",
+                rule="check_type_changes",
                 message=msg,
-                participant=tc.participant,
-                endpoint=tc.guid,
-                topic=tc.topic,
+                participant=participant,
+                endpoint=guid,
+                topic=topic,
             )
         )
-
     return alerts
+
+
+# Registry of default active rules
+RuleFunction = Callable[
+    [Baseline, dict[str, Any], ComparisonResult, Iterable[str] | None],
+    list[Alert],
+]
+
+DEFAULT_RULES: list[RuleFunction] = [
+    check_unauthorized_critical_publishers,
+    check_new_participants,
+    check_new_endpoints,
+    check_qos_changes,
+    check_role_changes,
+    check_type_changes,
+]
 
 
 def evaluate_all_rules(
@@ -214,16 +279,19 @@ def evaluate_all_rules(
     snapshot: dict[str, Any],
     comparison: ComparisonResult,
     critical_topics: Iterable[str] | None = None,
+    rules: Iterable[RuleFunction] | None = None,
 ) -> list[Alert]:
-    """Run the complete rule suite and consolidate generated alerts."""
-    rules = [
-        check_unauthorized_critical_publishers,
-        check_new_participants,
-        check_new_endpoints,
-        check_qos_changes,
-        check_type_or_role_changes,
-    ]
+    """Run the rule suite and consolidate generated alerts.
+    
+    Args:
+        baseline: Baseline instance.
+        snapshot: Raw snapshot dictionary.
+        comparison: ComparisonResult instance.
+        critical_topics: Optional override list for critical topics.
+        rules: Optional custom collection of rule functions to evaluate. Defaults to DEFAULT_RULES.
+    """
+    active_rules = rules if rules is not None else DEFAULT_RULES
     alerts: list[Alert] = []
-    for rule in rules:
+    for rule in active_rules:
         alerts.extend(rule(baseline, snapshot, comparison, critical_topics))
     return alerts
