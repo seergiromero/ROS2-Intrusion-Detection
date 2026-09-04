@@ -28,10 +28,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 if __package__:
-    from .models import Baseline, BaselineEndpoint
+    from .models import Baseline, BaselineEndpoint, ObservedEndpoint
 else:
-    from models import Baseline, BaselineEndpoint
+    from models import Baseline, BaselineEndpoint, ObservedEndpoint
 
+
+class SnapshotValidationError(ValueError):
+    """Raised when an observed snapshot structure fails validation."""
+    pass
 
 @dataclass(frozen=True)
 class QoSChange:
@@ -64,7 +68,7 @@ class RoleChange:
 class ComparisonResult:
     new_participants: set[str] = field(default_factory=set)
     removed_participants: set[str] = field(default_factory=set)
-    new_endpoints: list[dict[str, Any]] = field(default_factory=list)
+    new_endpoints: list[ObservedEndpoint] = field(default_factory=list)
     removed_endpoints: list[BaselineEndpoint] = field(default_factory=list)
     qos_changes: list[QoSChange] = field(default_factory=list)
     type_changes: list[TypeChange] = field(default_factory=list)
@@ -72,29 +76,40 @@ class ComparisonResult:
     new_topics: set[str] = field(default_factory=set)
     removed_topics: set[str] = field(default_factory=set)
 
-    def has_differences(self) -> bool:
-        """Returns True if any structural or attribute difference was detected."""
-        
-        return bool(
+    def has_differences(self, include_missing: bool = False) -> bool:
+        """
+        Returns True if structural or attribute differences were detected.
+
+        Args:
+            include_missing: If True, flags missing elements (participants, endpoints,
+                             topics) as differences. Defaults to False to avoid false
+                             positives caused by transient startup or packet loss.
+        """
+        has_active_anomalies = bool(
             self.new_participants
-            or self.removed_participants
             or self.new_endpoints
-            or self.removed_endpoints
             or self.qos_changes
             or self.type_changes
             or self.role_changes
             or self.new_topics
-            or self.removed_topics
+        )
+        if not include_missing:
+            return has_active_anomalies
+
+        return has_active_anomalies or bool(
+            self.removed_participants or self.removed_endpoints or self.removed_topics
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serializes the result to a standard dictionary format."""
-
+        """Serializes the comparison result to a standard dictionary format."""
         return {
             "has_differences": self.has_differences(),
+            "has_missing_elements": bool(
+                self.removed_participants or self.removed_endpoints or self.removed_topics
+            ),
             "new_participants": sorted(self.new_participants),
             "removed_participants": sorted(self.removed_participants),
-            "new_endpoints": self.new_endpoints,
+            "new_endpoints": [ep.to_dict() for ep in self.new_endpoints],
             "removed_endpoints": [ep.to_dict() for ep in self.removed_endpoints],
             "qos_changes": [
                 {
@@ -154,7 +169,7 @@ class SnapshotComparator:
 
         observed_participants, observed_endpoints = self._normalize_snapshot(snapshot)
         observed_topics = {
-            ep.get("topic") for ep in observed_endpoints.values() if ep.get("topic")
+            ep.topic for ep in observed_endpoints.values() if ep.topic
         }
 
         result.new_participants = observed_participants - self.baseline_participants
@@ -163,49 +178,46 @@ class SnapshotComparator:
         result.new_topics = observed_topics - self.baseline_topics
         result.removed_topics = self.baseline_topics - observed_topics
 
-        for guid, ep_data in observed_endpoints.items():
+        for guid, ep in observed_endpoints.items():
             if guid not in self.baseline_endpoints_by_guid:
-                result.new_endpoints.append(ep_data)
+                result.new_endpoints.append(ep)
                 continue
 
             baseline_ep = self.baseline_endpoints_by_guid[guid]
-            participant = ep_data.get("guid_prefix") or ep_data.get("participant")
-            topic = ep_data.get("topic", baseline_ep.topic)
+            participant = ep.participant
+            topic = ep.topic or baseline_ep.topic
 
-            observed_role = ep_data.get("role")
-            if observed_role and observed_role != baseline_ep.role:
+            if ep.role and ep.role != baseline_ep.role:
                 result.role_changes.append(
                     RoleChange(
                         guid=guid,
                         topic=topic,
                         participant=participant,
-                        observed_role=observed_role,
+                        observed_role=ep.role,
                         expected_role=baseline_ep.role,
                     )
                 )
 
-            observed_type = ep_data.get("type") or ep_data.get("type_name")
-            if observed_type and observed_type != baseline_ep.type_name:
+            if ep.type_name and ep.type_name != baseline_ep.type_name:
                 result.type_changes.append(
                     TypeChange(
                         guid=guid,
                         topic=topic,
                         participant=participant,
-                        observed_type=observed_type,
+                        observed_type=ep.type_name,
                         expected_type=baseline_ep.type_name,
                     )
                 )
 
-            observed_qos = ep_data.get("qos")
-            if isinstance(observed_qos, dict):
+            if ep.qos:
                 expected_qos = dict(baseline_ep.qos)
-                if not self._are_qos_matching(observed_qos, expected_qos):
+                if not self._are_qos_matching(ep.qos, expected_qos):
                     result.qos_changes.append(
                         QoSChange(
                             guid=guid,
                             topic=topic,
                             participant=participant,
-                            observed_qos=observed_qos,
+                            observed_qos=ep.qos,
                             expected_qos=expected_qos,
                         )
                     )
@@ -218,60 +230,111 @@ class SnapshotComparator:
 
     def _normalize_snapshot(
         self, snapshot: dict[str, Any]
-    ) -> tuple[set[str], dict[str, dict[str, Any]]]:
+    ) -> tuple[set[str], dict[str, ObservedEndpoint]]:
         """
-        Normalizes snapshots from GraphBuilder (nodes & edges) 
+        Validates and normalizes snapshots from GraphBuilder (nodes & edges)
         or direct sniffer memory dicts (participants & endpoints).
         """
+        if not isinstance(snapshot, dict):
+            raise SnapshotValidationError("Snapshot must be a dictionary mapping")
 
         graph = snapshot.get("graph", snapshot)
+        if not isinstance(graph, dict):
+            raise SnapshotValidationError("Snapshot payload/graph must be a dictionary")
+
         observed_participants: set[str] = set()
-        observed_endpoints: dict[str, dict[str, Any]] = {}
+        observed_endpoints: dict[str, ObservedEndpoint] = {}
 
-        if "nodes" in graph and "edges" in graph:
-            for node in graph.get("nodes", []):
-                if node.get("node_type") == "participant":
-                    raw_id = node.get("id", "")
-                    guid_prefix = raw_id.replace("participant:", "")
-                    observed_participants.add(guid_prefix)
+        # Format A: Graph structure with nodes and edges
+        if "nodes" in graph or "edges" in graph:
+            nodes = graph.get("nodes", [])
+            edges = graph.get("edges", [])
 
-            for edge in graph.get("edges", []):
+            if not isinstance(nodes, list) or not isinstance(edges, list):
+                raise SnapshotValidationError(
+                    "'nodes' and 'edges' in snapshot graph must be lists"
+                )
+
+            for node in nodes:
+                if isinstance(node, dict) and node.get("node_type") == "participant":
+                    raw_id = str(node.get("id", ""))
+                    guid_prefix = raw_id.replace("participant:", "").strip()
+                    if guid_prefix:
+                        observed_participants.add(guid_prefix)
+
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
                 guid = edge.get("guid") or edge.get("key")
-                if not guid:
+                if not guid or not isinstance(guid, str):
                     continue
 
-                src = edge.get("source", "")
-                dst = edge.get("target", "")
-                
-                topic = src.replace("topic:", "") if src.startswith("topic:") else dst.replace("topic:", "")
-                participant = src.replace("participant:", "") if src.startswith("participant:") else dst.replace("participant:", "")
+                src = str(edge.get("source", ""))
+                dst = str(edge.get("target", ""))
 
-                observed_endpoints[guid] = {
-                    "guid": guid,
-                    "guid_prefix": participant,
-                    "participant": participant,
-                    "topic": topic,
-                    "role": edge.get("role"),
-                    "type": edge.get("type_name"),
-                    "type_name": edge.get("type_name"),
-                    "qos": edge.get("qos", {}),
-                }
+                topic = ""
+                participant = None
+
+                if src.startswith("topic:"):
+                    topic = src.replace("topic:", "", 1).strip()
+                    if dst.startswith("participant:"):
+                        participant = dst.replace("participant:", "", 1).strip() or None
+                elif dst.startswith("topic:"):
+                    topic = dst.replace("topic:", "", 1).strip()
+                    if src.startswith("participant:"):
+                        participant = src.replace("participant:", "", 1).strip() or None
+
+                qos = edge.get("qos")
+                qos_dict = dict(qos) if isinstance(qos, dict) else {}
+                type_name = edge.get("type_name") or edge.get("type")
+
+                observed_endpoints[guid] = ObservedEndpoint(
+                    guid=guid.strip(),
+                    participant=participant,
+                    topic=topic,
+                    role=str(edge.get("role")).strip() if edge.get("role") else None,
+                    type_name=str(type_name).strip() if type_name else None,
+                    qos={str(k): str(v) for k, v in qos_dict.items()},
+                )
             return observed_participants, observed_endpoints
 
+        # Format B: Direct dictionary with participants and endpoints
         raw_participants = graph.get("participants", {})
         if isinstance(raw_participants, dict):
-            observed_participants = set(raw_participants.keys())
+            observed_participants = {str(p) for p in raw_participants}
 
         raw_endpoints = graph.get("endpoints", {})
         if isinstance(raw_endpoints, dict):
-            observed_endpoints = raw_endpoints
+            for guid, ep_data in raw_endpoints.items():
+                if not isinstance(ep_data, dict):
+                    continue
+                guid_str = str(guid).strip()
+                participant = ep_data.get("guid_prefix") or ep_data.get("participant")
+                qos = ep_data.get("qos")
+                qos_dict = dict(qos) if isinstance(qos, dict) else {}
+                type_name = ep_data.get("type_name") or ep_data.get("type")
+
+                observed_endpoints[guid_str] = ObservedEndpoint(
+                    guid=guid_str,
+                    participant=str(participant).strip() if participant else None,
+                    topic=str(ep_data.get("topic", "")).strip(),
+                    role=str(ep_data.get("role")).strip() if ep_data.get("role") else None,
+                    type_name=str(type_name).strip() if type_name else None,
+                    qos={str(k): str(v) for k, v in qos_dict.items()},
+                )
 
         return observed_participants, observed_endpoints
 
     @staticmethod
     def _are_qos_matching(observed: dict[str, str], expected: dict[str, str]) -> bool:
-        """Verifies if observed QoS attributes meet expected baseline parameters."""
+        """
+        Verifies if observed QoS attributes meet expected baseline parameters.
 
+        Note:
+            Uses subset matching: every policy defined in `expected` must be present
+            and equal in `observed`. Extra keys in `observed` are ignored to prevent
+            false positives caused by middleware default values.
+        """
         for key, expected_value in expected.items():
             if observed.get(key) != expected_value:
                 return False

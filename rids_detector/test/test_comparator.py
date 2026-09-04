@@ -26,10 +26,11 @@ from typing import Any
 import pytest
 
 from compare import (
-    ComparisonResult,
+    ObservedEndpoint,
     QoSChange,
     RoleChange,
     SnapshotComparator,
+    SnapshotValidationError,
     TypeChange,
 )
 from models import Baseline, BaselineEndpoint
@@ -106,6 +107,7 @@ def test_no_differences(sample_baseline: Baseline, graphbuilder_snapshot: dict[s
     result = comparator.compare(graphbuilder_snapshot)
 
     assert not result.has_differences()
+    assert not result.has_differences(include_missing=True)
     assert len(result.new_participants) == 0
     assert len(result.removed_participants) == 0
     assert len(result.new_endpoints) == 0
@@ -206,7 +208,8 @@ def test_fallback_sniffer_format(sample_baseline: Baseline):
 
     result = comparator.compare(snapshot)
 
-    assert result.has_differences()
+    assert not result.has_differences()
+    assert result.has_differences(include_missing=True)
     assert len(result.removed_endpoints) == 1
     assert result.removed_endpoints[0].guid == "010f0000.0002"
 
@@ -225,6 +228,217 @@ def test_to_dict_serialization(sample_baseline: Baseline):
 
     assert isinstance(serialized, dict)
     assert serialized["has_differences"] is True
+    assert serialized["has_missing_elements"] is True
     assert serialized["new_participants"] == ["99999999"]
     assert serialized["removed_participants"] == ["010f0000"]
     assert isinstance(serialized["removed_endpoints"], list)
+
+
+# ------------------------------------------------------------------
+# Additional tests
+# ------------------------------------------------------------------
+
+def test_empty_snapshot(sample_baseline: Baseline):
+    """Tests processing of an empty dictionary snapshot."""
+    comparator = SnapshotComparator(sample_baseline)
+    result = comparator.compare({})
+
+    assert not result.has_differences()
+    assert result.has_differences(include_missing=True)
+    assert len(result.removed_participants) == len(sample_baseline.participants)
+    assert len(result.removed_endpoints) == len(sample_baseline.endpoints)
+
+
+def test_snapshot_missing_nodes(sample_baseline: Baseline):
+    """Tests snapshot containing 'edges' key but missing 'nodes'."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = {"edges": []}
+
+    result = comparator.compare(snapshot)
+
+    assert not result.has_differences()
+    assert result.has_differences(include_missing=True)
+    assert len(result.removed_participants) == 1
+
+
+def test_snapshot_missing_edges(sample_baseline: Baseline):
+    """Tests snapshot containing 'nodes' key but missing 'edges'."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = {
+        "nodes": [{"id": "participant:010f0000", "node_type": "participant"}]
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert not result.has_differences()
+    assert result.has_differences(include_missing=True)
+    assert len(result.removed_endpoints) == 2
+
+
+def test_invalid_nodes_or_edges_type_raises_validation_error(sample_baseline: Baseline):
+    """Tests that non-list nodes or edges raise SnapshotValidationError."""
+    comparator = SnapshotComparator(sample_baseline)
+
+    with pytest.raises(SnapshotValidationError, match="must be lists"):
+        comparator.compare({"nodes": "not_a_list", "edges": []})
+
+    with pytest.raises(SnapshotValidationError, match="must be lists"):
+        comparator.compare({"nodes": [], "edges": {"not": "a_list"}})
+
+
+def test_edge_without_guid_ignored(sample_baseline: Baseline):
+    """Tests that edges lacking both 'guid' and 'key' are ignored gracefully."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = {
+        "nodes": [{"id": "participant:010f0000", "node_type": "participant"}],
+        "edges": [
+            {
+                "source": "participant:010f0000",
+                "target": "topic:/cmd_vel",
+                "role": "publisher",
+            }
+        ],
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert len(result.new_endpoints) == 0
+    assert len(result.removed_endpoints) == 2
+
+
+def test_edge_with_invalid_direction_handled(sample_baseline: Baseline):
+    """Tests edge where source/target do not follow topic/participant prefixes."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = {
+        "nodes": [],
+        "edges": [
+            {
+                "guid": "unknown.0001",
+                "source": "unprefixed_source",
+                "target": "unprefixed_target",
+                "role": "publisher",
+                "type_name": "std_msgs/msg/String",
+            }
+        ],
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert len(result.new_endpoints) == 1
+    new_ep = result.new_endpoints[0]
+    assert new_ep.guid == "unknown.0001"
+    assert new_ep.topic == ""
+    assert new_ep.participant is None
+
+
+def test_new_endpoint_in_graphbuilder_snapshot(
+    sample_baseline: Baseline, graphbuilder_snapshot: dict[str, Any]
+):
+    """Tests detection of a new unauthorized endpoint in GraphBuilder format."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = dict(graphbuilder_snapshot)
+    snapshot["edges"] = list(graphbuilder_snapshot["edges"]) + [
+        {
+            "source": "participant:010f0000",
+            "target": "topic:/unauthorized_topic",
+            "guid": "010f0000.9999",
+            "role": "publisher",
+            "type_name": "std_msgs/msg/Header",
+            "qos": {"reliability": "reliable"},
+        }
+    ]
+
+    result = comparator.compare(snapshot)
+
+    assert result.has_differences()
+    assert len(result.new_endpoints) == 1
+    new_ep = result.new_endpoints[0]
+    assert isinstance(new_ep, ObservedEndpoint)
+    assert new_ep.guid == "010f0000.9999"
+    assert new_ep.topic == "/unauthorized_topic"
+    assert new_ep.participant == "010f0000"
+    assert "/unauthorized_topic" in result.new_topics
+
+
+def test_incomplete_observed_qos_flags_change(sample_baseline: Baseline):
+    """Tests that observed QoS missing expected policy keys triggers QoSChange."""
+    comparator = SnapshotComparator(sample_baseline)
+
+    snapshot = {
+        "nodes": [{"id": "participant:010f0000", "node_type": "participant"}],
+        "edges": [
+            {
+                "guid": "010f0000.0001",
+                "source": "participant:010f0000",
+                "target": "topic:/cmd_vel",
+                "role": "publisher",
+                "type_name": "geometry_msgs/msg/Twist",
+                "qos": {"reliability": "reliable"},  # Missing expected 'durability'
+            }
+        ],
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert result.has_differences()
+    assert len(result.qos_changes) == 1
+    assert result.qos_changes[0].guid == "010f0000.0001"
+    assert result.qos_changes[0].observed_qos == {"reliability": "reliable"}
+    assert result.qos_changes[0].expected_qos == {
+        "reliability": "reliable",
+        "durability": "volatile",
+    }
+
+
+def test_multiple_endpoints_same_topic():
+    """Tests that multiple endpoints sharing the same topic are tracked independently."""
+    ep_pub = BaselineEndpoint("01.01", "01", "/cmd_vel", "publisher", "std_msgs/String", {})
+    ep_sub = BaselineEndpoint("01.02", "01", "/cmd_vel", "subscriber", "std_msgs/String", {})
+    baseline = Baseline(
+        version=1,
+        created_at="2026-09-03T00:00:00Z",
+        source="test",
+        participants=["01"],
+        endpoints=[ep_pub, ep_sub],
+        critical_topics=["/cmd_vel"],
+    )
+
+    comparator = SnapshotComparator(baseline)
+    snapshot = {
+        "nodes": [{"id": "participant:01", "node_type": "participant"}],
+        "edges": [
+            {
+                "guid": "01.01",
+                "source": "participant:01",
+                "target": "topic:/cmd_vel",
+                "role": "publisher",
+                "type_name": "std_msgs/String",
+            },
+            {
+                "guid": "01.02",
+                "source": "topic:/cmd_vel",
+                "target": "participant:01",
+                "role": "subscriber",
+                "type_name": "std_msgs/String",
+            },
+        ],
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert not result.has_differences()
+    assert len(result.removed_endpoints) == 0
+    assert len(result.new_endpoints) == 0
+
+
+def test_idempotent_comparison(
+    sample_baseline: Baseline, graphbuilder_snapshot: dict[str, Any]
+):
+    """Tests that repeating compare on the same snapshot produces identical results."""
+    comparator = SnapshotComparator(sample_baseline)
+
+    result1 = comparator.compare(graphbuilder_snapshot)
+    result2 = comparator.compare(graphbuilder_snapshot)
+
+    assert result1 == result2
+    assert result1.to_dict() == result2.to_dict()
