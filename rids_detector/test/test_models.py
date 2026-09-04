@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import json
 import pytest
 
-from rids_detector.models import Alert, BaselineEndpoint
+from rids_detector.models import Alert, Baseline, BaselineEndpoint
 
 
 def test_alert_is_serializable_and_keeps_context():
@@ -170,3 +170,25 @@ def test_alert_stable_identity():
     )
 
     assert alert.identity == expected_identity
+
+
+def test_baseline_guid_helpers():
+    endpoint = BaselineEndpoint(
+        guid="endpoint-guid",
+        participant="participant-guid",
+        topic="/scan",
+        role="publisher",
+        type_name="sensor_msgs/msg/LaserScan",
+        qos={"reliability": "RELIABLE"},
+    )
+    baseline = Baseline(
+        version=1,
+        created_at="2026-09-04T10:00:00Z",
+        source="unit_test",
+        critical_topics=("/scan",),
+        participants=("participant-guid",),
+        endpoints=(endpoint,),
+    )
+
+    assert baseline.endpoint_guids() == frozenset({"endpoint-guid"})
+    assert baseline.participant_guids() == frozenset({"participant-guid"})

@@ -35,6 +35,7 @@ from rids_detector.models import Alert, Baseline, BaselineEndpoint
 from rids_detector.rules import (
     check_new_endpoints,
     check_new_participants,
+    check_new_topics,
     check_qos_changes,
     check_role_changes,
     check_type_changes,
@@ -236,6 +237,87 @@ def test_check_type_changes_critical_and_normal(sample_baseline: Baseline):
     assert alerts[0].severity == "CRITICAL"
     assert alerts[0].rule == "check_type_changes"
     assert alerts[1].severity == "WARNING"
+
+
+# ------------------------------------------------------------------
+# Tests: check_new_topics policy
+# ------------------------------------------------------------------
+
+
+def test_new_non_critical_topic_generates_info(sample_baseline: Baseline):
+    comparison = ComparisonResult(new_topics={"/diagnostics"})
+    alerts = check_new_topics(sample_baseline, {}, comparison)
+
+    assert len(alerts) == 1
+    assert alerts[0].severity == "INFO"
+    assert alerts[0].rule == "check_new_topics"
+    assert alerts[0].topic == "/diagnostics"
+
+
+def test_new_critical_topic_does_not_generate_critical_without_publisher(
+    sample_baseline: Baseline,
+):
+    comparison = ComparisonResult(new_topics={"/critical/topic_a", "/other"})
+    alerts = evaluate_all_rules(sample_baseline, {}, comparison)
+
+    assert not any(a.severity == "CRITICAL" for a in alerts)
+    info_alerts = [a for a in alerts if a.rule == "check_new_topics"]
+    assert {a.topic for a in info_alerts} == {"/other"}
+
+
+def test_new_normal_publisher_generates_warning(sample_baseline: Baseline):
+    ep = ObservedEndpoint(
+        guid="pub.normal",
+        participant="writer_node",
+        topic="/normal/topic_b",
+        role="publisher",
+        type_name="std_msgs/msg/Int32",
+        qos={},
+    )
+    comparison = ComparisonResult(new_endpoints=[ep], new_topics={"/normal/topic_b"})
+    alerts = evaluate_all_rules(sample_baseline, {}, comparison)
+
+    endpoint_alerts = [a for a in alerts if a.rule == "check_new_endpoints"]
+    topic_alerts = [a for a in alerts if a.rule == "check_new_topics"]
+    assert len(endpoint_alerts) == 1
+    assert endpoint_alerts[0].severity == "WARNING"
+    assert len(topic_alerts) == 1
+    assert topic_alerts[0].severity == "INFO"
+
+
+def test_new_subscriber_on_critical_topic_generates_warning(sample_baseline: Baseline):
+    ep = ObservedEndpoint(
+        guid="sub.crit",
+        participant="reader_node",
+        topic="/critical/topic_a",
+        role="subscriber",
+        type_name="std_msgs/msg/String",
+        qos={},
+    )
+    comparison = ComparisonResult(new_endpoints=[ep])
+    alerts = evaluate_all_rules(sample_baseline, {}, comparison)
+
+    assert len(alerts) == 1
+    assert alerts[0].severity == "WARNING"
+    assert alerts[0].rule == "check_new_endpoints"
+
+
+def test_critical_publisher_generates_exactly_one_critical(sample_baseline: Baseline):
+    ep = ObservedEndpoint(
+        guid="pub.crit",
+        participant="p_legit",
+        topic="/critical/topic_a",
+        role="publisher",
+        type_name="std_msgs/msg/String",
+        qos={},
+    )
+    comparison = ComparisonResult(new_endpoints=[ep])
+    alerts = evaluate_all_rules(sample_baseline, {}, comparison)
+
+    critical = [a for a in alerts if a.severity == "CRITICAL"]
+    assert len(critical) == 1
+    assert critical[0].rule == "check_unauthorized_critical_publishers"
+    assert not any(a.rule == "check_new_endpoints" for a in alerts)
 
 
 # ------------------------------------------------------------------

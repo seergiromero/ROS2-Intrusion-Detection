@@ -193,3 +193,55 @@ def test_format_console_without_timestamp_or_context(tmp_path):
         formatted = manager._format_console(alert)
 
     assert formatted == "[WARNING] Rule: check_new_participants - Msg: Simple alert"
+
+
+def test_emit_info_alert_uses_info_logger(tmp_path, caplog):
+    alert_logger.propagate = True
+    caplog.set_level(logging.INFO, logger=alert_logger.name)
+    alert = Alert(
+        timestamp=1.0,
+        severity="INFO",
+        rule="check_new_topics",
+        message="Nuevo tópico Ñandú",
+        topic="/diagnóstico",
+    )
+    output_file = tmp_path / "alerts.jsonl"
+
+    with AlertManager(output_path=output_file, console_output=True) as manager:
+        manager.emit(alert)
+
+    assert "check_new_topics" in caplog.text
+    content = output_file.read_text(encoding="utf-8")
+    assert "Ñandú" in content
+    assert "diagnóstico" in content
+
+
+def test_two_alerts_write_two_jsonl_lines(tmp_path, sample_alert: Alert):
+    output_file = tmp_path / "alerts.jsonl"
+    second = Alert(
+        timestamp=2.0,
+        severity="CRITICAL",
+        rule="check_unauthorized_critical_publishers",
+        message="Unauthorized publisher",
+        topic="/cmd_vel",
+    )
+
+    with AlertManager(output_path=output_file, console_output=False) as manager:
+        manager.emit(sample_alert)
+        manager.emit(second)
+
+    lines = output_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["rule"] == "check_new_participants"
+    assert json.loads(lines[1])["severity"] == "CRITICAL"
+
+
+def test_append_between_two_manager_instances(tmp_path, sample_alert: Alert):
+    output_file = tmp_path / "alerts.jsonl"
+    with AlertManager(output_path=output_file, console_output=False) as first:
+        first.emit(sample_alert)
+    with AlertManager(output_path=output_file, console_output=False) as second:
+        second.emit(sample_alert)
+
+    lines = [line for line in output_file.read_text(encoding="utf-8").splitlines() if line]
+    assert len(lines) == 2
