@@ -298,18 +298,31 @@ class SnapshotComparator:
                 )
             return observed_participants, observed_endpoints
 
-        # Format B: Direct dictionary with participants and endpoints
+        # Format B: Direct dictionary with participants and endpoints.
         raw_participants = graph.get("participants", {})
         if isinstance(raw_participants, dict):
+            observed_participants = {str(p) for p in raw_participants}
+        elif isinstance(raw_participants, list):
             observed_participants = {str(p) for p in raw_participants}
 
         raw_endpoints = graph.get("endpoints", {})
         if isinstance(raw_endpoints, dict):
-            for guid, ep_data in raw_endpoints.items():
+            endpoint_items = raw_endpoints.items()
+        elif isinstance(raw_endpoints, list):
+            endpoint_items = (
+                (ep.get("guid"), ep) for ep in raw_endpoints if isinstance(ep, dict)
+            )
+        else:
+            endpoint_items = ()
+
+        if raw_endpoints:
+            for guid, ep_data in endpoint_items:
                 if not isinstance(ep_data, dict):
                     continue
-                guid_str = str(guid).strip()
-                participant = ep_data.get("guid_prefix") or ep_data.get("participant")
+                guid_str = str(guid or ep_data.get("guid") or "").strip()
+                if not guid_str:
+                    continue
+                participant = ep_data.get("participant") or ep_data.get("guid_prefix")
                 qos = ep_data.get("qos")
                 qos_dict = dict(qos) if isinstance(qos, dict) else {}
                 type_name = ep_data.get("type_name") or ep_data.get("type")
