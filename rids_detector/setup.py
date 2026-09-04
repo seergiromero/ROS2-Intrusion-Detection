@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]'))),
     ],
     install_requires=['setuptools', 'PyYAML'],
     zip_safe=True,
@@ -27,6 +28,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'rids_detector = rids_detector.main:main',
         ],
     },
 )
