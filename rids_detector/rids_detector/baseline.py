@@ -22,21 +22,24 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .models import Baseline, BaselineEndpoint, Role
+from .models import Baseline, BaselineEndpoint
 
 
 class BaselineValidationError(ValueError):
+    """Raised when a baseline configuration file or dictionary fails validation."""
+
     pass
 
-"""
-A class for loading and validating baseline configurations.
-"""
+
 class BaselineLoader:
+    """A loader class for reading, normalizing, and validating baseline configurations."""
+
     REQUIRED_ROOT_KEYS = {
         "version",
         "created_at",
@@ -48,7 +51,6 @@ class BaselineLoader:
 
     def load(self, path: str | Path) -> Baseline:
         """Load a baseline from a YAML file."""
-
         baseline_path = Path(path)
         if not baseline_path.is_file():
             raise FileNotFoundError(f"Baseline file not found: {baseline_path}")
@@ -59,8 +61,7 @@ class BaselineLoader:
         return self.from_dict(data, source_path=baseline_path)
 
     def from_dict(self, data: Any, source_path: str | Path | None = None) -> Baseline:
-        """Validate and construct a Baseline from a dictionary."""
-
+        """Validate, normalize, and construct a Baseline from a dictionary."""
         location = f" in {source_path}" if source_path else ""
         if not isinstance(data, dict):
             raise BaselineValidationError(f"Baseline must be a mapping{location}")
@@ -68,22 +69,26 @@ class BaselineLoader:
         missing = self.REQUIRED_ROOT_KEYS - data.keys()
         if missing:
             names = ", ".join(sorted(missing))
-            raise BaselineValidationError(f"Missing required baseline fields: {names}{location}")
+            raise BaselineValidationError(
+                f"Missing required baseline fields: {names}{location}"
+            )
 
         version = data["version"]
         if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             raise BaselineValidationError("version must be a positive integer")
 
-        created_at = self._required_string(data, "created_at")
+        created_at = self._validate_iso_timestamp(data["created_at"], "created_at")
         source = self._required_string(data, "source")
-        critical_topics = self._string_tuple(data, "critical_topics")
+        critical_topics = self._topic_tuple(data, "critical_topics")
         participants = self._string_tuple(data, "participants")
 
         raw_endpoints = data["endpoints"]
         if not isinstance(raw_endpoints, list):
             raise BaselineValidationError("endpoints must be a list")
 
-        endpoints = tuple(self._endpoint(item, index) for index, item in enumerate(raw_endpoints))
+        endpoints = tuple(
+            self._endpoint(item, index) for index, item in enumerate(raw_endpoints)
+        )
         endpoint_guids = [endpoint.guid for endpoint in endpoints]
         if len(endpoint_guids) != len(set(endpoint_guids)):
             raise BaselineValidationError("endpoint GUIDs must be unique")
@@ -107,29 +112,70 @@ class BaselineLoader:
         )
 
     @staticmethod
+    def _validate_topic(topic: Any, context: str) -> str:
+        """Normalize topic name ensuring non-empty string starting with '/'."""
+        if not isinstance(topic, str) or not topic.strip():
+            raise BaselineValidationError(f"{context} topic must be a non-empty string")
+        
+        normalized = topic.strip()
+        if not normalized.startswith("/"):
+            raise BaselineValidationError(
+                f"{context} topic must start with '/': '{topic}'"
+            )
+        return normalized
+
+    @staticmethod
+    def _validate_iso_timestamp(value: Any, name: str) -> str:
+        """Ensure created_at is a valid ISO 8601 date/time string."""
+        if not isinstance(value, str) or not value.strip():
+            raise BaselineValidationError(f"{name} must be a non-empty string")
+        
+        cleaned = value.strip()
+        try:
+            datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+        except ValueError:
+            raise BaselineValidationError(
+                f"{name} must be a valid ISO 8601 timestamp (e.g. '2026-09-04T10:00:00Z'), got '{value}'"
+            )
+        return cleaned
+
+    @staticmethod
     def _required_string(data: dict[str, Any], name: str) -> str:
         """Ensure that a required field is a non-empty string."""
-
         value = data[name]
         if not isinstance(value, str) or not value.strip():
             raise BaselineValidationError(f"{name} must be a non-empty string")
-        return value
+        return value.strip()
 
     @staticmethod
     def _string_tuple(data: dict[str, Any], name: str) -> tuple[str, ...]:
         """Ensure that a field is a list of non-empty strings and return it as a tuple."""
-
         value = data[name]
-        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
             raise BaselineValidationError(f"{name} must be a list of non-empty strings")
-        if len(value) != len(set(value)):
+        
+        cleaned = [item.strip() for item in value]
+        if len(cleaned) != len(set(cleaned)):
             raise BaselineValidationError(f"{name} must not contain duplicates")
-        return tuple(value)
+        return tuple(cleaned)
 
-    @staticmethod
-    def _endpoint(data: Any, index: int) -> BaselineEndpoint:
-        """Validate and construct a BaselineEndpoint from a dictionary."""
+    @classmethod
+    def _topic_tuple(cls, data: dict[str, Any], name: str) -> tuple[str, ...]:
+        """Validate critical topics list against ROS naming rules (leading '/')."""
+        value = data[name]
+        if not isinstance(value, list):
+            raise BaselineValidationError(f"{name} must be a list of topic strings")
 
+        topics = [cls._validate_topic(item, f"{name}[{i}]") for i, item in enumerate(value)]
+        if len(topics) != len(set(topics)):
+            raise BaselineValidationError(f"{name} must not contain duplicates")
+        return tuple(topics)
+
+    @classmethod
+    def _endpoint(cls, data: Any, index: int) -> BaselineEndpoint:
+        """Validate and construct a normalized BaselineEndpoint from a dictionary."""
         if not isinstance(data, dict):
             raise BaselineValidationError(f"endpoints[{index}] must be a mapping")
 
@@ -140,11 +186,14 @@ class BaselineLoader:
                 f"endpoints[{index}] missing: {', '.join(sorted(missing))}"
             )
 
-        for name in ("guid", "participant", "topic", "type_name"):
+        for name in ("guid", "participant", "type_name"):
             if not isinstance(data[name], str) or not data[name].strip():
-                raise BaselineValidationError(f"endpoints[{index}].{name} must be a non-empty string")
+                raise BaselineValidationError(
+                    f"endpoints[{index}].{name} must be a non-empty string"
+                )
 
-        role = data["role"]
+        topic = cls._validate_topic(data["topic"], f"endpoints[{index}]")
+        role = str(data["role"]).strip().lower()
         if role not in {"publisher", "subscriber"}:
             raise BaselineValidationError(
                 f"endpoints[{index}].role must be 'publisher' or 'subscriber'"
@@ -152,18 +201,20 @@ class BaselineLoader:
 
         qos = data["qos"]
         if not isinstance(qos, dict) or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in qos.items()
+            isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+            for k, v in qos.items()
         ):
             raise BaselineValidationError(
-                f"endpoints[{index}].qos must be a mapping of strings"
+                f"endpoints[{index}].qos must be a mapping of non-empty strings"
             )
 
+        normalized_qos = {k.strip(): v.strip() for k, v in qos.items()}
+
         return BaselineEndpoint(
-            guid=data["guid"],
-            participant=data["participant"],
-            topic=data["topic"],
-            role=role,
-            type_name=data["type_name"],
-            qos=dict(qos),
+            guid=data["guid"].strip(),
+            participant=data["participant"].strip(),
+            topic=topic,
+            role=role,  # type: ignore[arg-type]
+            type_name=data["type_name"].strip(),
+            qos=normalized_qos,
         )

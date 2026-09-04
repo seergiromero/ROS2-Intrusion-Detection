@@ -128,11 +128,64 @@ class TestBaselineLoader:
         assert len(baseline.participants) == 2
         assert len(baseline.endpoints) == 2
 
+    def test_invalid_critical_topic_without_leading_slash_rejected(self):
+        """Verifies that critical topics must start with a leading slash '/'."""
+        data = _copy_valid_baseline()
+        data["critical_topics"] = ["cmd_vel"]
+
+        with pytest.raises(BaselineValidationError, match="must start with '/'"):
+            BaselineLoader().from_dict(data)
+
+    def test_empty_topic_rejected(self):
+        """Verifies that empty strings or whitespace-only strings for topics are rejected."""
+        data = _copy_valid_baseline()
+        data["endpoints"][0]["topic"] = "   "
+
+        with pytest.raises(BaselineValidationError, match="non-empty string"):
+            BaselineLoader().from_dict(data)
+
+    def test_duplicate_participant_rejected(self):
+        """Verifies that duplicate participant declarations are explicitly rejected."""
+        data = _copy_valid_baseline()
+        data["participants"] = ["participant-a", "participant-a"]
+
+        with pytest.raises(BaselineValidationError, match="must not contain duplicates"):
+            BaselineLoader().from_dict(data)
+
+    def test_endpoint_topic_without_leading_slash_rejected(self):
+        """Verifies that endpoint topics are validated for leading slashes."""
+        data = _copy_valid_baseline()
+        data["endpoints"][0]["topic"] = "scan"
+
+        with pytest.raises(BaselineValidationError, match="must start with '/'"):
+            BaselineLoader().from_dict(data)
+
+    def test_invalid_created_at_timestamp_rejected(self):
+        """Verifies that non-ISO 8601 created_at values raise a validation error."""
+        data = _copy_valid_baseline()
+        data["created_at"] = "invalid-date-string"
+
+        with pytest.raises(BaselineValidationError, match="ISO 8601"):
+            BaselineLoader().from_dict(data)
+
+    def test_baseline_to_dict_and_reload_roundtrip(self):
+        """Verifies that Baseline.to_dict() output can be reloaded accurately via from_dict()."""
+        original_baseline = BaselineLoader().from_dict(VALID_BASELINE)
+        serialized_dict = original_baseline.to_dict()
+
+        reloaded_baseline = BaselineLoader().from_dict(serialized_dict)
+
+        assert reloaded_baseline == original_baseline
+        assert reloaded_baseline.to_dict() == serialized_dict
+
 
 def _copy_valid_baseline():
     return {
         **VALID_BASELINE,
         "critical_topics": list(VALID_BASELINE["critical_topics"]),
         "participants": list(VALID_BASELINE["participants"]),
-        "endpoints": [dict(endpoint, qos=dict(endpoint["qos"])) for endpoint in VALID_BASELINE["endpoints"]],
+        "endpoints": [
+            dict(endpoint, qos=dict(endpoint["qos"]))
+            for endpoint in VALID_BASELINE["endpoints"]
+        ],
     }
