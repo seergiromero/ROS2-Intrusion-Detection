@@ -49,15 +49,31 @@ class Alert:
         severity: Severity,
         rule: str,
         message: str,
-        **context: Any,
+        participant: str | None = None,
+        endpoint: str | None = None,
+        topic: str | None = None,
+        role: Role | None = None,
+        observed_qos: dict[str, str] | None = None,
+        expected_qos: dict[str, str] | None = None,
     ) -> "Alert":
+        """Factory method to instantiate an Alert with the current UTC timestamp."""
         return cls(
             timestamp=datetime.now(timezone.utc).timestamp(),
             severity=severity,
             rule=rule,
             message=message,
-            **context,
+            participant=participant,
+            endpoint=endpoint,
+            topic=topic,
+            role=role,
+            observed_qos=observed_qos,
+            expected_qos=expected_qos,
         )
+    
+    @property
+    def identity(self) -> tuple[str, str | None, str | None, str | None, Role | None]:
+        """Returns a composite key identifying the unique anomaly signature for deduplication."""
+        return (self.rule, self.topic, self.endpoint, self.participant, self.role)
 
     def to_dict(self) -> dict[str, Any]:
         return {

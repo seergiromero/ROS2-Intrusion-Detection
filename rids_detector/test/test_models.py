@@ -22,7 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+from datetime import datetime, timezone
 import json
+import pytest
 
 from rids_detector.models import Alert, BaselineEndpoint
 
@@ -64,3 +66,107 @@ def test_baseline_endpoint_to_dict_copies_qos():
     serialized["qos"]["reliability"] = "BEST_EFFORT"
 
     assert qos["reliability"] == "RELIABLE"
+
+
+def test_alert_now_creates_valid_timestamp():
+    """Verifies that Alert.now() generates a valid UTC timestamp."""
+    before = datetime.now(timezone.utc).timestamp()
+    alert = Alert.now(
+        severity="INFO",
+        rule="test_rule",
+        message="Test alert message",
+    )
+    after = datetime.now(timezone.utc).timestamp()
+
+    assert isinstance(alert.timestamp, float)
+    assert before <= alert.timestamp <= after
+
+
+def test_alert_optional_fields_default_to_none():
+    """Verifies that optional fields default to None when omitted."""
+    alert = Alert(
+        timestamp=100.0,
+        severity="INFO",
+        rule="minimal_rule",
+        message="Minimal alert",
+    )
+
+    assert alert.participant is None
+    assert alert.endpoint is None
+    assert alert.topic is None
+    assert alert.role is None
+    assert alert.observed_qos is None
+    assert alert.expected_qos is None
+
+    data = alert.to_dict()
+    assert data["participant"] is None
+    assert data["observed_qos"] is None
+
+
+def test_alert_full_serialization():
+    """Verifies full serialization of all Alert fields to a dictionary and valid JSON."""
+    alert = Alert(
+        timestamp=123.456,
+        severity="WARNING",
+        rule="qos_mismatch",
+        message="QoS policy mismatch detected",
+        participant="p_100",
+        endpoint="e_200",
+        topic="/sensor_data",
+        role="subscriber",
+        observed_qos={"durability": "TRANSIENT_LOCAL"},
+        expected_qos={"durability": "VOLATILE"},
+    )
+
+    expected_dict = {
+        "timestamp": 123.456,
+        "severity": "WARNING",
+        "rule": "qos_mismatch",
+        "message": "QoS policy mismatch detected",
+        "participant": "p_100",
+        "endpoint": "e_200",
+        "topic": "/sensor_data",
+        "role": "subscriber",
+        "observed_qos": {"durability": "TRANSIENT_LOCAL"},
+        "expected_qos": {"durability": "VOLATILE"},
+    }
+
+    serialized = alert.to_dict()
+    assert serialized == expected_dict
+    assert json.loads(json.dumps(serialized)) == expected_dict
+
+
+@pytest.mark.parametrize("valid_severity", ["INFO", "WARNING", "CRITICAL"])
+def test_alert_valid_severities(valid_severity):
+    """Verifies that all allowed Severity literals are correctly accepted."""
+    alert = Alert(
+        timestamp=1.0,
+        severity=valid_severity,
+        rule="rule_name",
+        message="Msg",
+    )
+    assert alert.severity == valid_severity
+
+
+def test_alert_stable_identity():
+    """Verifies that alert.identity produces a consistent tuple key for deduplication."""
+    alert = Alert(
+        timestamp=999.9,
+        severity="CRITICAL",
+        rule="unauthorized_publisher",
+        message="Different message",
+        topic="/cmd_vel",
+        endpoint="ep_123",
+        participant="part_456",
+        role="publisher",
+    )
+
+    expected_identity = (
+        "unauthorized_publisher",
+        "/cmd_vel",
+        "ep_123",
+        "part_456",
+        "publisher",
+    )
+
+    assert alert.identity == expected_identity
