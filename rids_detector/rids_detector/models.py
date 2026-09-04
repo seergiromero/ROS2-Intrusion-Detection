@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -133,4 +133,25 @@ class Baseline:
             "critical_topics": list(self.critical_topics),
             "participants": list(self.participants),
             "endpoints": [endpoint.to_dict() for endpoint in self.endpoints],
+        }
+
+@dataclass(frozen=True)
+class ObservedEndpoint:
+    """Represents a normalized endpoint extracted from a runtime snapshot."""
+    guid: str
+    topic: str
+    participant: str | None = None
+    role: str | None = None
+    type_name: str | None = None
+    qos: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serializes the observed endpoint into a dictionary representation."""
+        return {
+            "guid": self.guid,
+            "participant": self.participant,
+            "topic": self.topic,
+            "role": self.role,
+            "type_name": self.type_name,
+            "qos": dict(self.qos),
         }
