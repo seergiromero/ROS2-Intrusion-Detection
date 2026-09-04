@@ -226,6 +226,30 @@ def check_role_changes(
     return alerts
 
 
+def check_new_topics(
+    baseline: Baseline,
+    snapshot: dict[str, Any],
+    comparison: ComparisonResult,
+    critical_topics: Iterable[str] | None = None,
+) -> list[Alert]:
+    """Detect new topics not registered in the baseline (skips critical topics)."""
+    critical_set = set(critical_topics) if critical_topics is not None else set(baseline.critical_topics)
+    alerts: list[Alert] = []
+
+    for topic in sorted(comparison.new_topics):
+        if topic in critical_set:
+            continue
+        alerts.append(
+            Alert.now(
+                severity="INFO",
+                rule="check_new_topics",
+                message=f"New non-critical topic observed: '{topic}'",
+                topic=topic,
+            )
+        )
+    return alerts
+
+
 def check_type_changes(
     baseline: Baseline,
     snapshot: dict[str, Any],
@@ -268,6 +292,7 @@ DEFAULT_RULES: list[RuleFunction] = [
     check_unauthorized_critical_publishers,
     check_new_participants,
     check_new_endpoints,
+    check_new_topics,
     check_qos_changes,
     check_role_changes,
     check_type_changes,
