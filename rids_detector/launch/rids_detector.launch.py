@@ -96,6 +96,26 @@ def _resolve_workspace_path(value):
     return str(_workspace_root() / p)
 
 
+def _clear_results(config_path_str, section, name, default):
+    """Truncate a runtime result file so a fresh launch starts clean.
+
+    Resolves the configured path (anchored to the YAML's directory) and
+    empties the file. Missing parent directories are created so the
+    consumers can open it in append mode afterwards.
+    """
+    path = Path(
+        _resolve_against_config(
+            _yaml_value(config_path_str, section, name, default),
+            config_path_str,
+        )
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Launch description
 # ---------------------------------------------------------------------------
@@ -123,7 +143,7 @@ def generate_launch_description():
 
     baseline_arg = DeclareLaunchArgument(
         "baseline",
-        default_value="src/ROS2-Intrusion-Detection/config/baseline_talker.yaml",
+        default_value="src/ROS2-Intrusion-Detection/config/baseline_turtlesim.yaml",
         description=(
             "Optional override of the baseline YAML path. Empty (the "
             "default) means 'use [security].baseline from the config "
@@ -142,6 +162,17 @@ def generate_launch_description():
         ),
     )
 
+    reset_arg = DeclareLaunchArgument(
+        "reset",
+        default_value="true",
+        choices=["true", "false"],
+        description=(
+            "Truncate the snapshots and alerts JSONL files at launch. "
+            "True (default) gives every session a clean slate; set to "
+            "false to keep history across restarts."
+        ),
+    )
+
     # --- Introspector args pulled from the YAML ------------------------
     def _build_actions(context, *_):
         config_path = _resolve_workspace_path(
@@ -151,6 +182,10 @@ def generate_launch_description():
             LaunchConfiguration("baseline").perform(context)
         )
         mode = LaunchConfiguration("mode").perform(context)
+
+        if LaunchConfiguration("reset").perform(context) == "true":
+            _clear_results(config_path, "paths", "snapshots", "results/phase1/snapshots.jsonl")
+            _clear_results(config_path, "paths", "alerts", "results/phase2/alerts.jsonl")
 
         introspector_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(introspector_launch_path),
@@ -194,5 +229,6 @@ def generate_launch_description():
         config_arg,
         baseline_arg,
         mode_arg,
+        reset_arg,
         OpaqueFunction(function=_build_actions),
     ])
