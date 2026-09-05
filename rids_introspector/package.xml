@@ -7,7 +7,7 @@
   <maintainer email="sromerovalderas@gmail.com">Sergi Romero</maintainer>
   <license>MIT</license>
 
-  <depend>python3-scapy</depend>
+  <depend>python-scapy</depend>
   <depend>python3-networkx</depend>
   <depend>python3-matplotlib</depend>
 
