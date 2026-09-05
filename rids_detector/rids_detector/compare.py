@@ -26,12 +26,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import re
 
 if __package__:
     from .models import Baseline, BaselineEndpoint, ObservedEndpoint
 else:
     from models import Baseline, BaselineEndpoint, ObservedEndpoint
 
+_INFRA_TOPIC_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^ros_discovery_info$"),
+    re.compile(r"^/rosout$"),
+    re.compile(r"^/parameter_events$"),
+    re.compile(
+        r"^/.+/(get_parameters|set_parameters|set_parameters_atomically|"
+        r"describe_parameters|list_parameters|get_parameter_types|"
+        r"get_type_description)(Request|Reply)$"
+    ),
+)
+ 
+def is_ros2_infra_topic(topic: str | None) -> bool:
+    """True if ``topic`` is ROS 2/rmw plumbing rather than an application topic."""
+    if not topic:
+        return False
+    return any(pattern.match(topic) for pattern in _INFRA_TOPIC_PATTERNS)
 
 class SnapshotValidationError(ValueError):
     """Raised when an observed snapshot structure fails validation."""
@@ -284,6 +301,9 @@ class SnapshotComparator:
                     if src.startswith("participant:"):
                         participant = src.replace("participant:", "", 1).strip() or None
 
+                if is_ros2_infra_topic(topic):
+                    continue
+
                 qos = edge.get("qos")
                 qos_dict = dict(qos) if isinstance(qos, dict) else {}
                 type_name = edge.get("type_name") or edge.get("type")
@@ -321,6 +341,8 @@ class SnapshotComparator:
                     continue
                 guid_str = str(guid or ep_data.get("guid") or "").strip()
                 if not guid_str:
+                    continue
+                if is_ros2_infra_topic(ep_data.get("topic")):
                     continue
                 participant = ep_data.get("participant") or ep_data.get("guid_prefix")
                 qos = ep_data.get("qos")
