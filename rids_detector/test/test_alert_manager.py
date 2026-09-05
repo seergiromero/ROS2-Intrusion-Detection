@@ -30,6 +30,17 @@ from rids_detector.alert_manager import AlertManager, logger as alert_logger
 from rids_detector.models import Alert
 
 
+@pytest.fixture(autouse=True)
+def _propagate_alert_logger_to_root():
+    parent = logging.getLogger("rids_detector")
+    prev_parent, prev_child = parent.propagate, alert_logger.propagate
+    parent.propagate = True
+    alert_logger.propagate = True
+    yield
+    parent.propagate = prev_parent
+    alert_logger.propagate = prev_child
+
+
 @pytest.fixture
 def sample_alert() -> Alert:
     """Provides a realistic Alert instance with epoch timestamp and context."""
@@ -128,7 +139,6 @@ def test_emit_writes_jsonl_record(tmp_path, sample_alert: Alert):
 
 def test_emit_logging_output_enabled(tmp_path, sample_alert: Alert, caplog):
     """Verifies that output is captured via logger when console_output=True."""
-    alert_logger.propagate = True
     caplog.set_level(logging.WARNING, logger=alert_logger.name)
 
     output_file = tmp_path / "alerts.jsonl"
@@ -143,7 +153,6 @@ def test_emit_logging_output_enabled(tmp_path, sample_alert: Alert, caplog):
 
 def test_emit_logging_output_disabled(tmp_path, sample_alert: Alert, caplog):
     """Verifies that nothing is logged when console_output=False."""
-    alert_logger.propagate = True
     caplog.set_level(logging.INFO, logger=alert_logger.name)
 
     output_file = tmp_path / "alerts.jsonl"
@@ -196,7 +205,6 @@ def test_format_console_without_timestamp_or_context(tmp_path):
 
 
 def test_emit_info_alert_uses_info_logger(tmp_path, caplog):
-    alert_logger.propagate = True
     caplog.set_level(logging.INFO, logger=alert_logger.name)
     alert = Alert(
         timestamp=1.0,
