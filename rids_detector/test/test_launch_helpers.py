@@ -6,9 +6,9 @@ Copyright (c) 2026 Sergi Romero Valderas
 Tests for the YAML helper functions in rids_detector/launch/rids_detector.launch.py.
 
 The launch file is a regular Python module that exposes ``_yaml_value``,
-``_yaml_str``, ``_resolve_against_config`` and ``_resolve_workspace_path``
-as module-level callables. We extract and exercise them here so the
-launch-time contract is regression-tested without spinning up ROS 2.
+``_yaml_str``, ``_resolve_against_config``, ``_resolve_config_path`` and
+``_config_dir`` as module-level callables. We extract and exercise them here
+so the launch-time contract is regression-tested without spinning up ROS 2.
 """
 
 import ast
@@ -32,8 +32,8 @@ def _import_helpers():
         "_yaml_value",
         "_yaml_str",
         "_resolve_against_config",
-        "_resolve_workspace_path",
-        "_workspace_root",
+        "_resolve_config_path",
+        "_config_dir",
     }
     helpers = [
         node for node in tree.body
@@ -41,6 +41,7 @@ def _import_helpers():
     ]
     prelude = ast.Module(
         body=[
+            ast.Import(names=[ast.alias(name="os", asname=None)]),
             ast.Import(names=[ast.alias(name="yaml", asname=None)]),
             ast.ImportFrom(
                 module="pathlib",
@@ -57,12 +58,12 @@ def _import_helpers():
         namespace["_yaml_value"],
         namespace["_yaml_str"],
         namespace["_resolve_against_config"],
-        namespace["_resolve_workspace_path"],
-        namespace["_workspace_root"],
+        namespace["_resolve_config_path"],
+        namespace["_config_dir"],
     )
 
 
-_yaml_value, _yaml_str, _resolve_against_config, _resolve_workspace_path, _workspace_root = (
+_yaml_value, _yaml_str, _resolve_against_config, _resolve_config_path, _config_dir = (
     _import_helpers()
 )
 
@@ -153,60 +154,50 @@ class TestResolveAgainstConfig:
 
 
 # ---------------------------------------------------------------------------
-# _workspace_root
+# _config_dir
 # ---------------------------------------------------------------------------
 
-class TestWorkspaceRoot:
-    def test_returns_an_existing_directory(self):
-        root = _workspace_root()
-        assert isinstance(root, Path)
-        assert root.is_dir()
+class TestConfigDir:
+    def test_returns_an_existing_directory_with_rids_yaml(self):
+        config_dir = _config_dir()
+        assert isinstance(config_dir, Path)
+        assert config_dir.is_dir()
+        assert (config_dir / "rids.yaml").is_file()
 
-    def test_workspace_root_contains_src_ros2_intrusion_detection(self):
-        root = _workspace_root()
-        assert (root / "src" / "ROS2-Intrusion-Detection").is_dir()
+    def test_prefers_rids_config_dir_env_var(self, tmp_path, monkeypatch):
+        fake = tmp_path / "config"
+        fake.mkdir()
+        (fake / "rids.yaml").write_text("detector: {}\n", encoding="utf-8")
+        monkeypatch.setenv("RIDS_CONFIG_DIR", str(fake))
+        assert _config_dir() == fake.resolve()
+
+    def test_env_var_without_rids_yaml_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RIDS_CONFIG_DIR", str(tmp_path))
+        with pytest.raises(RuntimeError, match="does not contain rids.yaml"):
+            _config_dir()
 
 
 # ---------------------------------------------------------------------------
-# _resolve_workspace_path
+# _resolve_config_path
 # ---------------------------------------------------------------------------
 
-class TestResolveWorkspacePath:
-    def test_relative_path_anchored_to_workspace_root(self):
+class TestResolveConfigPath:
+    def test_relative_path_anchored_to_config_dir(self):
         """A relative path passed to the launch's --config is resolved
-        against the workspace root. The workspace root in this repo is
-        the directory containing ``src/ROS2-Intrusion-Detection/``.
+        against the RIDS config directory (the one holding rids.yaml).
         """
-        # The canonical config lives at
-        # <workspace>/src/ROS2-Intrusion-Detection/config/rids.yaml.
-        canonical = (
-            _workspace_root()
-            / "src"
-            / "ROS2-Intrusion-Detection"
-            / "config"
-            / "rids.yaml"
-        )
-        assert canonical.is_file(), (
-            f"canonical config not found at {canonical}; the test was run "
-            "from a layout that the workspace_root() heuristic does not "
-            "recognise"
-        )
-
-        # The default --config value is the path relative to the workspace
-        # root of the file just verified.
-        default_config = "src/ROS2-Intrusion-Detection/config/rids.yaml"
-        result = _resolve_workspace_path(default_config)
+        result = _resolve_config_path("rids.yaml")
         assert Path(result).is_absolute()
-        assert Path(result) == canonical
+        assert Path(result) == _config_dir() / "rids.yaml"
         assert Path(result).is_file()
 
     def test_absolute_path_returned_unchanged(self):
         abs_path = "/etc/hosts"
-        result = _resolve_workspace_path(abs_path)
+        result = _resolve_config_path(abs_path)
         assert result == abs_path
 
     def test_empty_string_returned_unchanged(self):
-        assert _resolve_workspace_path("") == ""
+        assert _resolve_config_path("") == ""
 
 
 # ---------------------------------------------------------------------------

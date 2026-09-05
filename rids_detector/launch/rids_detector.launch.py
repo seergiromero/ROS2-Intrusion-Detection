@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+import os
 from pathlib import Path
 
 import yaml
@@ -75,25 +76,53 @@ def _resolve_against_config(value, config_path_str):
     return str(Path(config_path_str).resolve().parent / p)
 
 
-def _workspace_root() -> Path:
-    """Return the colcon workspace root that holds ``src/ROS2-Intrusion-Detection``."""
+def _config_dir() -> Path:
+    """Return the directory holding the RIDS YAML configuration files.
+
+    Resolution order:
+      1. ``RIDS_CONFIG_DIR`` environment variable — an absolute path to a
+         directory that contains ``rids.yaml`` (escape hatch for layouts the
+         heuristics below do not recognise).
+      2. Walk up from this launch file to the first ancestor that directly
+         contains ``config/rids.yaml`` — the repository root, regardless of
+         what the repository folder is called (source-tree launches).
+      3. Walk up looking for ``<ancestor>/src/<repo>/config/rids.yaml`` —
+         covers an installed copy of this launch file inside a standard
+         colcon workspace, again without assuming the repository name.
+    """
+    env_dir = os.environ.get("RIDS_CONFIG_DIR")
+    if env_dir:
+        path = Path(env_dir).expanduser()
+        if (path / "rids.yaml").is_file():
+            return path
+        raise RuntimeError(
+            f"RIDS_CONFIG_DIR is set but '{path}' does not contain rids.yaml"
+        )
+
     for candidate in Path(__file__).resolve().parents:
-        if (candidate / "src" / "ROS2-Intrusion-Detection").is_dir():
-            return candidate
+        if (candidate / "config" / "rids.yaml").is_file():
+            return candidate / "config"
+        src_root = candidate / "src"
+        if src_root.is_dir():
+            for subdir in sorted(src_root.iterdir()):
+                if (subdir / "config" / "rids.yaml").is_file():
+                    return subdir / "config"
+
     raise RuntimeError(
-        "Could not locate the RIDS workspace root (expected a directory "
-        "containing src/ROS2-Intrusion-Detection)."
+        "Could not locate the RIDS config directory (expected a directory "
+        "containing config/rids.yaml). Set the RIDS_CONFIG_DIR environment "
+        "variable to point at it."
     )
 
 
-def _resolve_workspace_path(value):
-    """Resolve a launch path against the workspace root."""
+def _resolve_config_path(value):
+    """Resolve a launch path against the RIDS config directory."""
     if not isinstance(value, str) or not value:
         return str(value)
     p = Path(value)
     if p.is_absolute():
         return str(p)
-    return str(_workspace_root() / p)
+    return str(_config_dir() / p)
 
 
 def _clear_results(config_path_str, section, name, default):
@@ -130,25 +159,23 @@ def generate_launch_description():
     # --- Primary launch arguments --------------------------------------
     config_arg = DeclareLaunchArgument(
         "config",
-        default_value=_resolve_workspace_path(
-            "src/ROS2-Intrusion-Detection/config/rids.yaml"
-        ),
+        default_value=str(_config_dir() / "rids.yaml"),
         description=(
             "Path to the global RIDS YAML. All operational tunables "
             "(paths, capture filter, polling rate, ...) live in this file. "
-            "Relative paths are resolved against the workspace root "
-            "(the directory containing src/ROS2-Intrusion-Detection)."
+            "Relative paths are resolved against the RIDS config directory "
+            "($RIDS_CONFIG_DIR, or the directory containing config/rids.yaml)."
         ),
     )
 
     baseline_arg = DeclareLaunchArgument(
         "baseline",
-        default_value="src/ROS2-Intrusion-Detection/config/baseline_turtlesim.yaml",
+        default_value=str(_config_dir() / "baseline.yaml"),
         description=(
             "Optional override of the baseline YAML path. Empty (the "
             "default) means 'use [security].baseline from the config "
-            "YAML'. Relative paths are resolved against the workspace "
-            "root."
+            "YAML'. Relative paths are resolved against the RIDS config "
+            "directory."
         ),
     )
 
@@ -175,10 +202,10 @@ def generate_launch_description():
 
     # --- Introspector args pulled from the YAML ------------------------
     def _build_actions(context, *_):
-        config_path = _resolve_workspace_path(
+        config_path = _resolve_config_path(
             LaunchConfiguration("config").perform(context)
         )
-        baseline_path = _resolve_workspace_path(
+        baseline_path = _resolve_config_path(
             LaunchConfiguration("baseline").perform(context)
         )
         mode = LaunchConfiguration("mode").perform(context)
