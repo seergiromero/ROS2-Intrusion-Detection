@@ -1,26 +1,109 @@
+# -----------------------------------------------------------------------------
+# Introspector (passive RTPS sniffer that builds the DDS discovery graph).
+# These values are forwarded as launch arguments to rids_introspector.
+# -----------------------------------------------------------------------------
 introspector:
+  # Network interface to capture on. Use 'lo' for localhost-only setups
+  # (talker/listener, single-machine Nav2). Use the real NIC name (e.g.
+  # 'eth0', 'wlan0') for multi-host DDS domains.
   interface: lo
+
+  # BPF capture filter passed to scapy. The DDS discovery multicast lives
+  # on port 7400; SEDP unicast uses dynamically-negotiated ports that may
+  # fall outside the 7400-7600 default range. If endpoints are missing
+  # from the baseline, widen this to:
+  #   "udp portrange 7400-7600 or udp dst portrange 7400-65535"
+  # or set to "" to disable filtering entirely (high CPU on busy links).
   port_filter: "udp portrange 7400-7600"
+
+  # How often the introspector samples the sniffer and writes a JSONL
+  # snapshot, in seconds.
   interval: 1.0
+
+  # When true, opens a live Matplotlib graph of the DDS topology instead
+  # of the terminal table view. Requires a display.
   gui: false
-  no_terminal: false
+
+  # When true, suppresses the terminal table view. Useful when running
+  # headless or when the GUI is enabled.
+  no_terminal: true
+
+  # Width of the terminal table in characters. Set to 0 to auto-size.
   table_width: 180
+
+  # When true, the introspector logs every captured frame and SEDP/SPDP
+  # parse step. Very verbose; only enable for diagnosis.
   debug: false
 
+
+# -----------------------------------------------------------------------------
+# Detector (compares the live graph against a baseline and emits alerts).
+# -----------------------------------------------------------------------------
 detector:
+  # Execution mode:
+  #   "live"  - tail the snapshots JSONL file forever and emit alerts as
+  #             anomalies are observed (the default; production use).
+  #   "once"  - drain the existing snapshots file once and exit. Useful
+  #             for offline analysis of a pre-recorded run.
   mode: live
+
+  # In "live" mode, how often the detector re-reads the snapshots file
+  # looking for new entries, in seconds.
   poll_interval: 0.5
+
+  # When true, alerts are also printed to the console (in addition to
+  # being written to the JSONL alerts file). Set to false for headless
+  # deployments that consume alerts.jsonl from another process.
   console: true
 
+
+# -----------------------------------------------------------------------------
+# Output paths. All paths are relative to this YAML's directory unless
+# absolute. The YAML lives in ``config/`` of the workspace, so a relative
+# path of ``results/phase1/snapshots.jsonl`` resolves to
+# ``<workspace>/src/ROS2-Intrusion-Detection/config/results/phase1/snapshots.jsonl``
+# when this file is read in its installed location.
+# -----------------------------------------------------------------------------
 paths:
+  # Root directory for runtime artefacts. Used as the base for snapshots
+  # and alerts if those are not set explicitly.
   results_dir: results
+
+  # JSONL file where the introspector appends one snapshot per line.
+  # Consumed by the detector in live / once mode.
   snapshots: results/phase1/snapshots.jsonl
+
+  # JSONL file where the detector appends one alert per line.
   alerts: results/phase2/alerts.jsonl
 
+
+# -----------------------------------------------------------------------------
+# Security policy. The baseline is the "known good" graph; critical topics
+# are the security-sensitive ones that must never be published by an
+# unknown participant.
+# -----------------------------------------------------------------------------
 security:
-  baseline: config/baseline.yaml
+  # Path to the baseline YAML produced by scripts/baseline.py.
+  # Relative paths are resolved from this YAML's directory.
+  baseline: baseline.yaml
+
+  # Topics the detector treats as critical. A new publisher on any of
+  # these (i.e. a publisher not present in the baseline) generates a
+  # CRITICAL alert.
   critical_topics:
     - /cmd_vel
     - /scan
     - /goal_pose
     - /tf
+
+  # Extra topic patterns (Python regex, ``re.search`` semantics) that the
+  # detector should treat as ROS 2 middleware.  Topics that match the
+  # built-in allowlist (``ros_discovery_info``, ``/rosout``,
+  # ``/parameter_events``, the parameter services, action sub-topics,
+  # ``_ros2cli_*`` clients, ...) are silenced by default.  Add extra
+  # patterns here for your own internal infra topics that you do not
+  # want flagged as new endpoints.  The default empty list does not
+  # disable the built-in allowlist; set ``disable_built_in_middleware``
+  # to ``true`` to bypass the defaults entirely.
+  middleware_topic_patterns: []
+  disable_built_in_middleware: false
