@@ -32,6 +32,7 @@ from compare import (
     SnapshotComparator,
     SnapshotValidationError,
     TypeChange,
+    is_ros2_infra_topic,
 )
 from models import Baseline, BaselineEndpoint
 
@@ -442,3 +443,67 @@ def test_idempotent_comparison(
 
     assert result1 == result2
     assert result1.to_dict() == result2.to_dict()
+
+
+# ------------------------------------------------------------------
+# ROS 2 action / middleware topics
+# ------------------------------------------------------------------
+
+def test_action_topics_are_infra():
+    """Action plumbing topics are treated as middleware, not new endpoints."""
+    for topic in (
+        "/turtle1/rotate_absolute/_action/send_goalRequest",
+        "/turtle1/rotate_absolute/_action/send_goalReply",
+        "/turtle1/rotate_absolute/_action/cancel_goalRequest",
+        "/turtle1/rotate_absolute/_action/cancel_goalReply",
+        "/turtle1/rotate_absolute/_action/get_resultRequest",
+        "/turtle1/rotate_absolute/_action/get_resultReply",
+        "/turtle1/rotate_absolute/_action/feedback",
+        "/turtle1/rotate_absolute/_action/status",
+        "/nav2/navigate_to_pose/_action/send_goalRequest",
+    ):
+        assert is_ros2_infra_topic(topic) is True, topic
+
+
+def test_app_topics_are_not_infra():
+    """Application topics (even action-sounding ones) must not be silenced."""
+    for topic in (
+        "/turtle1/cmd_vel",
+        "/turtle1/pose",
+        "/chatter",
+        "/robot/action_feedback",
+        "/action_server/status",
+        "/actions",
+        None,
+    ):
+        assert is_ros2_infra_topic(topic) is False, topic
+
+
+def test_action_endpoints_excluded_from_comparison(sample_baseline: Baseline):
+    """A snapshot whose only new endpoints are action topics yields no differences."""
+    comparator = SnapshotComparator(sample_baseline)
+    snapshot = {
+        "nodes": [{"id": "participant:010f0000", "node_type": "participant"}],
+        "edges": [
+            {
+                "guid": "010f0000.00a1",
+                "source": "participant:010f0000",
+                "target": "topic:/turtle1/rotate_absolute/_action/send_goalRequest",
+                "role": "publisher",
+                "type_name": "turtlesim::action::dds_::RotateAbsolute_SendGoal_Request_",
+            },
+            {
+                "guid": "010f0000.00a2",
+                "source": "topic:/turtle1/rotate_absolute/_action/status",
+                "target": "participant:010f0000",
+                "role": "subscriber",
+                "type_name": "action_msgs::msg::dds_::GoalStatusArray_",
+            },
+        ],
+    }
+
+    result = comparator.compare(snapshot)
+
+    assert len(result.new_endpoints) == 0
+    assert len(result.new_topics) == 0
+    assert not result.has_differences()

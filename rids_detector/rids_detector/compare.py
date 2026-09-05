@@ -42,6 +42,7 @@ _INFRA_TOPIC_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"describe_parameters|list_parameters|get_parameter_types|"
         r"get_type_description)(Request|Reply)$"
     ),
+    re.compile(r"^/.+/_action/"),
 )
  
 def is_ros2_infra_topic(topic: str | None) -> bool:
