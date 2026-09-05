@@ -1,30 +1,352 @@
-# Example baseline for talker/listener development only.
-# Capture a separate Nav2/TurtleBot3 baseline for demo results.
 version: 1
-created_at: "2026-09-03T00:00:00Z"
-source: "normal_session_talker_listener"
-critical_topics:
-  - /cmd_vel
-  - /scan
-  - /goal_pose
-  - /tf
+created_at: '2026-09-05T10:51:52Z'
+source: turtlesim
+critical_topics: []
 participants:
-  - "01:0f:39:63:83:58:bf:0c:00:00:00:00"
-  - "01:0f:39:63:9f:49:46:ed:00:00:00:00"
+- 01:0f:39:63:6e:23:87:ba:00:00:00:00
+- 01:0f:39:63:d0:21:5f:c0:00:00:00:00
 endpoints:
-  - guid: "01:0f:39:63:83:58:bf:0c:00:00:00:00:00:03:02"
-    participant: "01:0f:39:63:83:58:bf:0c:00:00:00:00"
-    topic: /chatter
-    role: publisher
-    type_name: "std_msgs::msg::dds_::String_"
-    qos:
-      reliability: RELIABLE
-      durability: VOLATILE
-  - guid: "01:0f:39:63:9f:49:46:ed:00:00:00:00:00:04:02"
-    participant: "01:0f:39:63:9f:49:46:ed:00:00:00:00"
-    topic: /chatter
-    role: subscriber
-    type_name: "std_msgs::msg::dds_::String_"
-    qos:
-      reliability: RELIABLE
-      durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:03:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /rosout
+  role: publisher
+  type_name: rcl_interfaces::msg::dds_::Log_
+  qos:
+    reliability: RELIABLE
+    durability: TRANSIENT_LOCAL
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:04:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_parametersRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::GetParameters_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:05:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_parametersReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::GetParameters_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:06:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_parameter_typesRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::GetParameterTypes_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:07:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_parameter_typesReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::GetParameterTypes_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:08:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/set_parametersRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::SetParameters_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:09:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/set_parametersReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::SetParameters_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0a:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/set_parameters_atomicallyRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::SetParametersAtomically_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0b:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/set_parameters_atomicallyReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::SetParametersAtomically_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0c:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/describe_parametersRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::DescribeParameters_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0d:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/describe_parametersReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::DescribeParameters_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0e:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/list_parametersRequest
+  role: subscriber
+  type_name: rcl_interfaces::srv::dds_::ListParameters_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:0f:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/list_parametersReply
+  role: publisher
+  type_name: rcl_interfaces::srv::dds_::ListParameters_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:10:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /parameter_events
+  role: publisher
+  type_name: rcl_interfaces::msg::dds_::ParameterEvent_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:11:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /parameter_events
+  role: subscriber
+  type_name: rcl_interfaces::msg::dds_::ParameterEvent_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:12:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_type_descriptionRequest
+  role: subscriber
+  type_name: type_description_interfaces::srv::dds_::GetTypeDescription_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:13:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtlesim/get_type_descriptionReply
+  role: publisher
+  type_name: type_description_interfaces::srv::dds_::GetTypeDescription_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:14:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /clearRequest
+  role: subscriber
+  type_name: std_srvs::srv::dds_::Empty_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:15:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /clearReply
+  role: publisher
+  type_name: std_srvs::srv::dds_::Empty_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:16:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /resetRequest
+  role: subscriber
+  type_name: std_srvs::srv::dds_::Empty_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:17:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /resetReply
+  role: publisher
+  type_name: std_srvs::srv::dds_::Empty_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:18:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /spawnRequest
+  role: subscriber
+  type_name: turtlesim::srv::dds_::Spawn_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:19:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /spawnReply
+  role: publisher
+  type_name: turtlesim::srv::dds_::Spawn_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1a:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /killRequest
+  role: subscriber
+  type_name: turtlesim::srv::dds_::Kill_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1b:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /killReply
+  role: publisher
+  type_name: turtlesim::srv::dds_::Kill_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1c:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /parameter_events
+  role: subscriber
+  type_name: rcl_interfaces::msg::dds_::ParameterEvent_
+  qos:
+    reliability: BEST_EFFORT
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1d:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/cmd_vel
+  role: subscriber
+  type_name: geometry_msgs::msg::dds_::Twist_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1e:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/pose
+  role: publisher
+  type_name: turtlesim::msg::dds_::Pose_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:1f:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/color_sensor
+  role: publisher
+  type_name: turtlesim::msg::dds_::Color_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:20:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/set_penRequest
+  role: subscriber
+  type_name: turtlesim::srv::dds_::SetPen_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:21:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/set_penReply
+  role: publisher
+  type_name: turtlesim::srv::dds_::SetPen_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:22:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/teleport_relativeRequest
+  role: subscriber
+  type_name: turtlesim::srv::dds_::TeleportRelative_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:23:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/teleport_relativeReply
+  role: publisher
+  type_name: turtlesim::srv::dds_::TeleportRelative_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:24:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/teleport_absoluteRequest
+  role: subscriber
+  type_name: turtlesim::srv::dds_::TeleportAbsolute_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:25:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/teleport_absoluteReply
+  role: publisher
+  type_name: turtlesim::srv::dds_::TeleportAbsolute_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:26:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/send_goalRequest
+  role: subscriber
+  type_name: turtlesim::action::dds_::RotateAbsolute_SendGoal_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:27:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/send_goalReply
+  role: publisher
+  type_name: turtlesim::action::dds_::RotateAbsolute_SendGoal_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:28:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/cancel_goalRequest
+  role: subscriber
+  type_name: action_msgs::srv::dds_::CancelGoal_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:29:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/cancel_goalReply
+  role: publisher
+  type_name: action_msgs::srv::dds_::CancelGoal_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:2a:04
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/get_resultRequest
+  role: subscriber
+  type_name: turtlesim::action::dds_::RotateAbsolute_GetResult_Request_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:2b:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/get_resultReply
+  role: publisher
+  type_name: turtlesim::action::dds_::RotateAbsolute_GetResult_Response_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:2c:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/feedback
+  role: publisher
+  type_name: turtlesim::action::dds_::RotateAbsolute_FeedbackMessage_
+  qos:
+    reliability: RELIABLE
+    durability: VOLATILE
+- guid: 01:0f:39:63:d0:21:5f:c0:00:00:00:00:00:00:2d:03
+  participant: 01:0f:39:63:d0:21:5f:c0:00:00:00:00
+  topic: /turtle1/rotate_absolute/_action/status
+  role: publisher
+  type_name: action_msgs::msg::dds_::GoalStatusArray_
+  qos:
+    reliability: RELIABLE
+    durability: TRANSIENT_LOCAL
