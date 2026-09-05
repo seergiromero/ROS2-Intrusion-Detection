@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>rids_detector</name>
-  <version>0.0.0</version>
+  <version>0.2.0</version>
   <description>Baseline-based anomaly detector for ROS 2 RTPS graphs.</description>
   <maintainer email="sromerovalderas@gmail.com">sergi</maintainer>
   <license>MIT</license>

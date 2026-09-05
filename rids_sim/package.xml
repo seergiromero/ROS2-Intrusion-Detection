@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>rids_sim</name>
-  <version>0.0.0</version>
+  <version>0.2.0</version>
   <description>Simulation environment for RIDS, providing Gazebo world setups, map files, and Nav2 integration for TurtleBot3 Waffle.</description>  
   <maintainer email="sromerovalderas@gmail.com">Sergi Romero</maintainer>
   <license>MIT</license>
